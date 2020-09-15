@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "driver/gpio.h"
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -10,32 +11,69 @@
 #include "driver/timer.h"
 #include "driver/uart.h"
 
-#define TXPIN 16
-#define RXPIN 17
+#define GPIO_LED1 26
+#define GPIO_LED2 27
+#define GPIO_LED3 33
+
+#define LF_ASCII_CODE 10    // Enter button
+
+#define CMD_MAX_LEN 10      // Max cmd len "led pulse"
+
+void handle_cmd(char *cmd) {
+    if(strstr(cmd, "led on") == cmd) {
+        if(strstr(cmd, " 1") != NULL) {
+            gpio_set_direction(GPIO_LED1, GPIO_MODE_OUTPUT);
+            gpio_set_level(GPIO_LED1, 1);
+        }
+        if(strstr(cmd, " 2") != NULL) {
+            gpio_set_direction(GPIO_LED2, GPIO_MODE_OUTPUT);
+            gpio_set_level(GPIO_LED2, 1);
+        }
+        if(strstr(cmd, " 3") != NULL) {
+            gpio_set_direction(GPIO_LED3, GPIO_MODE_OUTPUT);
+            gpio_set_level(GPIO_LED3, 1);
+        }
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+    else if(strstr(cmd, "led off") == cmd) {
+        if(strstr(cmd, " 1") != NULL) {
+            gpio_set_direction(GPIO_LED1, GPIO_MODE_DISABLE);
+        }
+        if(strstr(cmd, " 2") != NULL) {
+            gpio_set_direction(GPIO_LED2, GPIO_MODE_DISABLE);
+        }
+        if(strstr(cmd, " 3") != NULL) {
+            gpio_set_direction(GPIO_LED3, GPIO_MODE_DISABLE);
+        }
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+    printf("\n\n");
+}
 
 void app_main() {
-    const int uart_buffer_size = (1024 * 2);
+    char cmd[CMD_MAX_LEN];
 
-    uart_config_t uart_cfg = {
-        .baud_rate = 115200,
-        .data_bits = UART_DATA_8_BITS,
-        .parity = UART_PARITY_DISABLE,
-        .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_CTS_RTS,
-        .rx_flow_ctrl_thresh = 122
-    };
-    uart_param_config(UART_NUM_2, &uart_cfg);
-    char buf[100];
-
-    bzero(&buf, 100);
-
-    uart_set_pin(UART_NUM_2, RXPIN, TXPIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-
-    uart_driver_install(UART_NUM_2, uart_buffer_size, 0, 0, NULL, 0);
-    char* str = "\e[41mRED\e[0m \e[42mGREEN\e[0m \e[44mBLUE\e[0m \e[0mDEFAULT\r\n";
     while(true) {
-        uart_read_bytes(UART_NUM_2, &buf, 100, 100);
-        printf("%s\n", buf);
-        vTaskDelay(100);
+        bool end_cmd = false;
+        bzero(&cmd, CMD_MAX_LEN);
+        /* 
+         * (CMD_MAX_LEN - 1) = max len - 1 byte for '\0'
+         */
+        for(int ind = 0; ind < (CMD_MAX_LEN - 1) && !end_cmd;) {
+            if(scanf("%c", &cmd[ind]) != -1) {
+                if(cmd[ind] == LF_ASCII_CODE) {
+                    end_cmd = true;
+                    cmd[ind] = '\0';
+                }
+                else {
+                    printf("%c", cmd[ind]);
+                    ind++;
+                }
+                vTaskDelay(10 / portTICK_PERIOD_MS);
+            }
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+        }
+        handle_cmd(cmd);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 }
