@@ -15,65 +15,131 @@
 #define GPIO_LED2 27
 #define GPIO_LED3 33
 
+#define TXPIN 16
+#define RXPIN 17
+
 #define LF_ASCII_CODE 10    // Enter button
 
-#define CMD_MAX_LEN 10      // Max cmd len "led pulse"
+#define CMD_MAX_LEN 15      // Max cmd len "led pulse"
 
-void handle_cmd(char *cmd) {
-    if(strstr(cmd, "led on") == cmd) {
-        if(strstr(cmd, " 1") != NULL) {
-            gpio_set_direction(GPIO_LED1, GPIO_MODE_OUTPUT);
-            gpio_set_level(GPIO_LED1, 1);
+QueueHandle_t queue = NULL;
+
+void handle_cmd(void *pvParameters) {
+    while(true) {
+        char cmd[CMD_MAX_LEN];
+        bzero(&cmd, CMD_MAX_LEN);
+        xQueueReceive(queue, &cmd, 100);
+        if(strstr(cmd, "led on") == cmd) {
+            if(strstr(cmd, " 1") != NULL) {
+                gpio_set_direction(GPIO_LED1, GPIO_MODE_OUTPUT);
+                gpio_set_level(GPIO_LED1, 1);
+            }
+            if(strstr(cmd, " 2") != NULL) {
+                gpio_set_direction(GPIO_LED2, GPIO_MODE_OUTPUT);
+                gpio_set_level(GPIO_LED2, 1);
+            }
+            if(strstr(cmd, " 3") != NULL) {
+                gpio_set_direction(GPIO_LED3, GPIO_MODE_OUTPUT);
+                gpio_set_level(GPIO_LED3, 1);
+            }
+            vTaskDelay(10 / portTICK_PERIOD_MS);
         }
-        if(strstr(cmd, " 2") != NULL) {
-            gpio_set_direction(GPIO_LED2, GPIO_MODE_OUTPUT);
-            gpio_set_level(GPIO_LED2, 1);
+        else if(strstr(cmd, "led off") == cmd) {
+            if(strstr(cmd, " 1") != NULL) {
+                gpio_set_direction(GPIO_LED1, GPIO_MODE_DISABLE);
+            }
+            if(strstr(cmd, " 2") != NULL) {
+                gpio_set_direction(GPIO_LED2, GPIO_MODE_DISABLE);
+            }
+            if(strstr(cmd, " 3") != NULL) {
+                gpio_set_direction(GPIO_LED3, GPIO_MODE_DISABLE);
+            }
+            vTaskDelay(10 / portTICK_PERIOD_MS);
         }
-        if(strstr(cmd, " 3") != NULL) {
-            gpio_set_direction(GPIO_LED3, GPIO_MODE_OUTPUT);
-            gpio_set_level(GPIO_LED3, 1);
+        else if(strstr(cmd, "led pulse") == cmd) {
+            if(strstr(cmd, " 1") != NULL) {
+                gpio_set_direction(GPIO_LED1, GPIO_MODE_DISABLE);
+            }
+            if(strstr(cmd, " 2") != NULL) {
+                gpio_set_direction(GPIO_LED2, GPIO_MODE_DISABLE);
+            }
+            if(strstr(cmd, " 3") != NULL) {
+                gpio_set_direction(GPIO_LED3, GPIO_MODE_DISABLE);
+            }
+            vTaskDelay(10 / portTICK_PERIOD_MS);
         }
-        vTaskDelay(10 / portTICK_PERIOD_MS);
-    }
-    else if(strstr(cmd, "led off") == cmd) {
-        if(strstr(cmd, " 1") != NULL) {
-            gpio_set_direction(GPIO_LED1, GPIO_MODE_DISABLE);
-        }
-        if(strstr(cmd, " 2") != NULL) {
-            gpio_set_direction(GPIO_LED2, GPIO_MODE_DISABLE);
-        }
-        if(strstr(cmd, " 3") != NULL) {
-            gpio_set_direction(GPIO_LED3, GPIO_MODE_DISABLE);
-        }
-        vTaskDelay(10 / portTICK_PERIOD_MS);
     }
     printf("\n\n");
 }
 
-void app_main() {
-    char cmd[CMD_MAX_LEN];
+void clear_str(int len) {
+    printf("\r");
+    for(int i = 0; i < len + 1; i++) {
+        printf(" ");
+    }
+    printf("\r");
+}
 
+void print_input(char *input) {
+    int len = strlen(input);
+
+    printf("\r");
+    for(int i = 0; i < len + 1; i++) {
+        printf(" ");
+    }
+    printf("\r");
+    printf("%s", input);
+}
+
+void input_getter(void *pvParameters) {
     while(true) {
+        char cmd[CMD_MAX_LEN];
         bool end_cmd = false;
+        uint8_t buff[1];
+
         bzero(&cmd, CMD_MAX_LEN);
-        /* 
-         * (CMD_MAX_LEN - 1) = max len - 1 byte for '\0'
-         */
+        clear_str(CMD_MAX_LEN);
         for(int ind = 0; ind < (CMD_MAX_LEN - 1) && !end_cmd;) {
-            if(scanf("%c", &cmd[ind]) != -1) {
+            if(uart_read_bytes(UART_NUM_2, &buff[0], 1, 100) > 0) {
+                cmd[ind] = buff[0];
                 if(cmd[ind] == LF_ASCII_CODE) {
                     end_cmd = true;
                     cmd[ind] = '\0';
                 }
-                else {
-                    printf("%c", cmd[ind]);
-                    ind++;
+                else if(cmd[ind] == 8) {
+                    printf("\033[D");
+                    cmd[ind] = '\0';
+                    cmd[ind - 1] = '\0';
+                    ind--;
                 }
+                else
+                    ind++;
+                print_input(cmd);
                 vTaskDelay(10 / portTICK_PERIOD_MS);
             }
             vTaskDelay(10 / portTICK_PERIOD_MS);
         }
-        handle_cmd(cmd);
+        xQueueSendToBack(queue, &cmd, 0);
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }
+}
+
+void app_main() {
+    queue = xQueueCreate(1, CMD_MAX_LEN);
+    const int uart_buffer_size = (1024 * 2);
+
+    uart_config_t uart_cfg = {
+        .baud_rate = 115200,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_CTS_RTS,
+        .rx_flow_ctrl_thresh = 122
+    };
+    uart_param_config(UART_NUM_2, &uart_cfg);
+    uart_set_pin(UART_NUM_2, RXPIN, TXPIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    uart_driver_install(UART_NUM_2, uart_buffer_size, 0, 0, NULL, 0);
+    
+    xTaskCreate(input_getter, "input_getter", 4048, NULL, 2, NULL);
+    xTaskCreate(handle_cmd, "handle_cmd", 4048, NULL, 1, NULL);
 }
