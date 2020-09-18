@@ -94,34 +94,46 @@ void print_input(char *input) {
 void input_getter(void *pvParameters) {
     while(true) {
         char cmd[CMD_MAX_LEN];
+        char *request = NULL;
         bool end_cmd = false;
-        uint8_t buff[1];
+        uint8_t buff[CMD_MAX_LEN];
 
         bzero(&cmd, CMD_MAX_LEN);
+        bzero(&buff, CMD_MAX_LEN);
         clear_str(CMD_MAX_LEN);
         for(int ind = 0; ind < (CMD_MAX_LEN - 1) && !end_cmd;) {
-            if(uart_read_bytes(UART_NUM_2, &buff[0], 1, 100) > 0) {
-                cmd[ind] = buff[0];
-                if(cmd[ind] == LF_ASCII_CODE) {
-                    end_cmd = true;
-                    cmd[ind] = '\0';
-                }
-                else if(cmd[ind] == 8) {
-                    printf("\033[D");
-                    cmd[ind] = '\0';
-                    cmd[ind - 1] = '\0';
-                    ind--;
-                }
-                else
-                    ind++;
-                print_input(cmd);
-                vTaskDelay(10 / portTICK_PERIOD_MS);
-            }
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
-        xQueueSendToBack(queue, &cmd, 0);
+            uart_flush_input(UART_NUM_2);
+            if(uart_read_bytes(UART_NUM_2, &buff[ind], 1, (50 / portTICK_PERIOD_MS)) == 1) {
+                char *tmp = (char *)buff;
+                printf("%s", tmp);
+                uart_write_bytes(UART_NUM_2, (const char*)tmp, strlen(tmp));
+                ind++;
+        //         if(cmd[ind] == LF_ASCII_CODE) {
+        //             end_cmd = true;
+        //             cmd[ind] = '\0';
+        //         }
+        //         else if(cmd[ind] == 8) {
+        //             printf("\033[D");
+        //             cmd[ind] = '\0';
+        //             cmd[ind - 1] = '\0';
+        //             ind--;
+        //         }
+        //         else
+        //             ind++;
+        //         print_input(cmd);
+        //         vTaskDelay(10 / portTICK_PERIOD_MS);
+        //     }
+        //     vTaskDelay(10 / portTICK_PERIOD_MS);
+        // }
+        // xQueueSendToBack(queue, &cmd, 0);
         vTaskDelay(100 / portTICK_PERIOD_MS);
+        }
+        else {
+            printf("hui\n");
+            vTaskDelay(100 / portTICK_PERIOD_MS);
+        }
     }
+}
 }
 
 void app_main() {
@@ -141,5 +153,5 @@ void app_main() {
     uart_driver_install(UART_NUM_2, uart_buffer_size, 0, 0, NULL, 0);
     
     xTaskCreate(input_getter, "input_getter", 4048, NULL, 2, NULL);
-    xTaskCreate(handle_cmd, "handle_cmd", 4048, NULL, 1, NULL);
+    // xTaskCreate(handle_cmd, "handle_cmd", 4048, NULL, 1, NULL);
 }

@@ -156,5 +156,5 @@ void app_main() {
     global_queue_handle = xQueueCreate(5, COMMAND_LINE_MAX_LENGTH);
     uart_init(9600);
     xTaskCreate(user_input,  "user_input",  4040, NULL, 10, NULL);
-    xTaskCreate(cmd_handler, "cmd_handler", 4040, NULL, 10, NULL);
+    // xTaskCreate(cmd_handler, "cmd_handler", 4040, NULL, 10, NULL);
 }
