@@ -1,13 +1,13 @@
 # Target labels
  bootloader
 # Source files and their labels
-/Users/ylebid/Desktop/rtos/t01/build/CMakeFiles/bootloader
-/Users/ylebid/Desktop/rtos/t01/build/CMakeFiles/bootloader.rule
-/Users/ylebid/Desktop/rtos/t01/build/CMakeFiles/bootloader-complete.rule
-/Users/ylebid/Desktop/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule
-/Users/ylebid/Desktop/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule
-/Users/ylebid/Desktop/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule
-/Users/ylebid/Desktop/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule
-/Users/ylebid/Desktop/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule
-/Users/ylebid/Desktop/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule
-/Users/ylebid/Desktop/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule
+/Users/mac/CLionProjects/rtos/t01/build/CMakeFiles/bootloader
+/Users/mac/CLionProjects/rtos/t01/build/CMakeFiles/bootloader.rule
+/Users/mac/CLionProjects/rtos/t01/build/CMakeFiles/bootloader-complete.rule
+/Users/mac/CLionProjects/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule
+/Users/mac/CLionProjects/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule
+/Users/mac/CLionProjects/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule
+/Users/mac/CLionProjects/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule
+/Users/mac/CLionProjects/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule
+/Users/mac/CLionProjects/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule
+/Users/mac/CLionProjects/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule

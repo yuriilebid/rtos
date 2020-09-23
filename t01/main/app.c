@@ -28,6 +28,7 @@ QueueHandle_t queue = NULL;
 QueueHandle_t error = NULL;
 QueueHandle_t pulse = NULL;
 
+
 void pwm_pulsing(void *pvParameters) {
     bool status = false;
 
@@ -92,7 +93,7 @@ void pwm_pulsing(void *pvParameters) {
     }
 }
 
-void handle_cmd(void *pvParameters) {
+void handle_cmd(void *) {
     while(true) {
         char cmd[CMD_MAX_LEN];
         bzero(&cmd, CMD_MAX_LEN);
@@ -157,7 +158,7 @@ void print_input(char *input) {
     printf("%s", input);
 }
 
-void input_getter(void *pvParameters) {
+void input_getter(void *) {
     uint8_t buff[CMD_MAX_LEN];
     uint8_t err[ERR_MAX_LEN];
     char* text_pick = "> ";
@@ -166,8 +167,8 @@ void input_getter(void *pvParameters) {
         char *request = NULL;
         bool end_cmd = false;
 
-        bzero(buff, CMD_MAX_LEN);
-        bzero(err, ERR_MAX_LEN);
+        bzero(&buff, CMD_MAX_LEN);
+        bzero(&err, ERR_MAX_LEN);
         uart_write_bytes(UART_NUM_2, text_pick, strlen(text_pick));
         for(int ind = 0; ind < (CMD_MAX_LEN - 1) && !end_cmd;) {
             uart_flush_input(UART_NUM_2);

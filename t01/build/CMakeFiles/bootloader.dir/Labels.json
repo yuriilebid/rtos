@@ -2,34 +2,34 @@
 	"sources" : 
 	[
 		{
-			"file" : "/Users/ylebid/Desktop/rtos/t01/build/CMakeFiles/bootloader"
+			"file" : "/Users/mac/CLionProjects/rtos/t01/build/CMakeFiles/bootloader"
 		},
 		{
-			"file" : "/Users/ylebid/Desktop/rtos/t01/build/CMakeFiles/bootloader.rule"
+			"file" : "/Users/mac/CLionProjects/rtos/t01/build/CMakeFiles/bootloader.rule"
 		},
 		{
-			"file" : "/Users/ylebid/Desktop/rtos/t01/build/CMakeFiles/bootloader-complete.rule"
+			"file" : "/Users/mac/CLionProjects/rtos/t01/build/CMakeFiles/bootloader-complete.rule"
 		},
 		{
-			"file" : "/Users/ylebid/Desktop/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule"
+			"file" : "/Users/mac/CLionProjects/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule"
 		},
 		{
-			"file" : "/Users/ylebid/Desktop/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule"
+			"file" : "/Users/mac/CLionProjects/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule"
 		},
 		{
-			"file" : "/Users/ylebid/Desktop/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule"
+			"file" : "/Users/mac/CLionProjects/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule"
 		},
 		{
-			"file" : "/Users/ylebid/Desktop/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule"
+			"file" : "/Users/mac/CLionProjects/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule"
 		},
 		{
-			"file" : "/Users/ylebid/Desktop/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule"
+			"file" : "/Users/mac/CLionProjects/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule"
 		},
 		{
-			"file" : "/Users/ylebid/Desktop/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule"
+			"file" : "/Users/mac/CLionProjects/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule"
 		},
 		{
-			"file" : "/Users/ylebid/Desktop/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule"
+			"file" : "/Users/mac/CLionProjects/rtos/t01/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule"
 		}
 	],
 	"target" : 

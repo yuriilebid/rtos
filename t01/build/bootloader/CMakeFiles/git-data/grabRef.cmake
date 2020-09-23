@@ -15,18 +15,18 @@
 
 set(HEAD_HASH)
 
-file(READ "/Users/ylebid/Desktop/rtos/t01/build/bootloader/CMakeFiles/git-data/HEAD" HEAD_CONTENTS LIMIT 1024)
+file(READ "/Users/mac/CLionProjects/rtos/t01/build/bootloader/CMakeFiles/git-data/HEAD" HEAD_CONTENTS LIMIT 1024)
 
 string(STRIP "${HEAD_CONTENTS}" HEAD_CONTENTS)
 if(HEAD_CONTENTS MATCHES "ref")
 	# named branch
 	string(REPLACE "ref: " "" HEAD_REF "${HEAD_CONTENTS}")
-	if(EXISTS "/Users/ylebid/esp/esp-idf/.git/${HEAD_REF}")
-		configure_file("/Users/ylebid/esp/esp-idf/.git/${HEAD_REF}" "/Users/ylebid/Desktop/rtos/t01/build/bootloader/CMakeFiles/git-data/head-ref" COPYONLY)
+	if(EXISTS "/Users/mac/esp/esp-idf/.git/${HEAD_REF}")
+		configure_file("/Users/mac/esp/esp-idf/.git/${HEAD_REF}" "/Users/mac/CLionProjects/rtos/t01/build/bootloader/CMakeFiles/git-data/head-ref" COPYONLY)
 	else()
-		if(EXISTS "/Users/ylebid/esp/esp-idf/.git/packed-refs")
-			configure_file("/Users/ylebid/esp/esp-idf/.git/packed-refs" "/Users/ylebid/Desktop/rtos/t01/build/bootloader/CMakeFiles/git-data/packed-refs" COPYONLY)
-			file(READ "/Users/ylebid/Desktop/rtos/t01/build/bootloader/CMakeFiles/git-data/packed-refs" PACKED_REFS)
+		if(EXISTS "/Users/mac/esp/esp-idf/.git/packed-refs")
+			configure_file("/Users/mac/esp/esp-idf/.git/packed-refs" "/Users/mac/CLionProjects/rtos/t01/build/bootloader/CMakeFiles/git-data/packed-refs" COPYONLY)
+			file(READ "/Users/mac/CLionProjects/rtos/t01/build/bootloader/CMakeFiles/git-data/packed-refs" PACKED_REFS)
 			if(${PACKED_REFS} MATCHES "([0-9a-z]*) ${HEAD_REF}")
 				set(HEAD_HASH "${CMAKE_MATCH_1}")
 			endif()
@@ -34,10 +34,10 @@ if(HEAD_CONTENTS MATCHES "ref")
 	endif()
 else()
 	# detached HEAD
-	configure_file("/Users/ylebid/esp/esp-idf/.git/HEAD" "/Users/ylebid/Desktop/rtos/t01/build/bootloader/CMakeFiles/git-data/head-ref" COPYONLY)
+	configure_file("/Users/mac/esp/esp-idf/.git/HEAD" "/Users/mac/CLionProjects/rtos/t01/build/bootloader/CMakeFiles/git-data/head-ref" COPYONLY)
 endif()
 
 if(NOT HEAD_HASH)
-	file(READ "/Users/ylebid/Desktop/rtos/t01/build/bootloader/CMakeFiles/git-data/head-ref" HEAD_HASH LIMIT 1024)
+	file(READ "/Users/mac/CLionProjects/rtos/t01/build/bootloader/CMakeFiles/git-data/head-ref" HEAD_HASH LIMIT 1024)
 	string(STRIP "${HEAD_HASH}" HEAD_HASH)
 endif()

@@ -1,9 +1,9 @@
-set(CMAKE_HOST_SYSTEM "Darwin-18.7.0")
+set(CMAKE_HOST_SYSTEM "Darwin-19.6.0")
 set(CMAKE_HOST_SYSTEM_NAME "Darwin")
-set(CMAKE_HOST_SYSTEM_VERSION "18.7.0")
+set(CMAKE_HOST_SYSTEM_VERSION "19.6.0")
 set(CMAKE_HOST_SYSTEM_PROCESSOR "x86_64")
 
-include("/Users/ylebid/esp/esp-idf/tools/cmake/toolchain-esp32.cmake")
+include("/Users/mac/esp/esp-idf/tools/cmake/toolchain-esp32.cmake")
 
 set(CMAKE_SYSTEM "Generic")
 set(CMAKE_SYSTEM_NAME "Generic")
