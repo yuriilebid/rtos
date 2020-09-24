@@ -31,6 +31,8 @@
 #define GPIO_SCL GPIO_NUM_22
 #define SH1106_ADDR 0x3C        // Deafault sh1106  address
 #define SH1106_PORT I2C_NUM_0
+#define TEST_WITHOUT_RELOAD   0        // testing will be done without auto reload
+#define TEST_WITH_RELOAD      1        // testing will be done with auto reload
 
 static int HOURS = 0;
 static int MINUTES = 0;
@@ -59,6 +61,8 @@ typedef struct {
     int timer_idx;
     uint64_t timer_counter_value;
 } timer_event_t;
+
+xQueueHandle timer_queue;
 
 void init_i2c() {
     i2c_config_t i2c_config = {
@@ -225,32 +229,41 @@ void IRAM_ATTR clock(void *para) {
     /* Clear the interrupt
        and update the alarm time for the timer with without reload */
 
-    evt.type = 1;
+    evt.type = TEST_WITHOUT_RELOAD;
     timer_group_clr_intr_status_in_isr(TIMER_GROUP_0, TIMER_0);
+    timer_counter_value += (uint64_t) (1 * TIMER_SCALE);
+    timer_group_set_alarm_value_in_isr(TIMER_GROUP_0, TIMER_0, timer_counter_value);
+    // evt.type = 1;
+    // timer_group_clr_intr_status_in_isr(TIMER_GROUP_0, TIMER_0);
 
     /* After the alarm has been triggered
       we need enable it again, so it is triggered the next time */
     timer_group_enable_alarm_in_isr(TIMER_GROUP_0, TIMER_0);
 
     /* Now just send the event data back to the main program task */
+    xQueueSendFromISR(timer_queue, &evt, NULL);
     timer_spinlock_give(TIMER_GROUP_0);
 }
 
 void time_output(void *param) {
     while(true) {
+        timer_event_t evt;
         double value;
+
+        xQueueReceive(timer_queue, &evt, portMAX_DELAY);
         timer_get_counter_time_sec(TIMER_GROUP_0, TIMER_0, &value);
-        printf("%f\n", value);
-        vTaskDelay(1);
+        printf("%lld\n", evt.timer_counter_value);
+        // printf();
     }
 }
 
 void app_main() {
+    timer_queue = xQueueCreate(10, sizeof(timer_event_t));
     const timer_config_t clock_cfg = {
         .alarm_en = TIMER_ALARM_EN,           // TIMER_ALARM_DIS
         .counter_en = TIMER_PAUSE,            // TIMER_START
         .intr_type = TIMER_INTR_LEVEL,        // TIMER_INTR_MAX
-        .auto_reload = TIMER_AUTORELOAD_EN,   // TIMER_AUTORELOAD_DIS
+        .auto_reload = TIMER_AUTORELOAD_DIS,   // TIMER_AUTORELOAD_DIS
         .divider = TIMER_DIVIDER,             // Divisor of the incoming 80 MHz APB_CLK clock
         .counter_dir = TIMER_COUNT_UP         // from 0 to ...
 
@@ -262,7 +275,7 @@ void app_main() {
     if(timer_set_counter_value(TIMER_GROUP_0, TIMER_0, 0x00000000ULL) != ESP_OK) {
         printf("Дзвiночок 1\n");
     }
-    if(timer_set_alarm_value(TIMER_GROUP_0, TIMER_0, 2 * TIMER_SCALE) != ESP_OK) {     // means 5 sec.
+    if(timer_set_alarm_value(TIMER_GROUP_0, TIMER_0, 1 * TIMER_SCALE) != ESP_OK) {     // means 5 sec.
         printf("Дзвiночок 2\n");
     }
     if(timer_enable_intr(TIMER_GROUP_0, TIMER_0) != ESP_OK) {
