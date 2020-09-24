@@ -172,6 +172,12 @@ void input_getter(void *pvParameters) {
         for(int ind = 0; ind < (CMD_MAX_LEN - 1) && !end_cmd;) {
             uart_flush_input(UART_NUM_2);
             int exit = uart_read_bytes(UART_NUM_2, &buff[ind], 1, (200 / portTICK_PERIOD_MS));
+            // if(buff[ind] == 27) {
+            //     uart_read_bytes(UART_NUM_2, &buff[ind], 1, (200 / portTICK_PERIOD_MS));
+            //     uart_read_bytes(UART_NUM_2, &buff[ind], 1, (200 / portTICK_PERIOD_MS));
+            //     printf("%d\n", buff[ind]);
+            //     printf("%d\n\n", buff[ind]);
+            // }
             if(exit == 1) {
                 char *tmp = (char *)&buff[ind];
                 if(buff[ind] == LF_ASCII_CODE) {
@@ -197,7 +203,7 @@ void input_getter(void *pvParameters) {
         xQueueSendToBack(queue, &buff, 0);
         if(xQueueReceive(error, &err, 5) != errQUEUE_EMPTY) {
             uart_write_bytes(UART_NUM_2, "\n\r", 2);
-            uart_write_bytes(UART_NUM_2, err, strlen((char*)err));
+            uart_write_bytes(UART_NUM_2, (char*)err, strlen((char*)err));
 
             text_pick = "\e[0;31m> \e[0;39m";
         }

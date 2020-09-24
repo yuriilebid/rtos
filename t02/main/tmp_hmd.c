@@ -29,6 +29,7 @@ QueueHandle_t ram = NULL;
 QueueHandle_t error = NULL;
 
 int time_secs_general = 0;
+int time_secs_current = 0;
 
 typedef struct data_dht {
     int temperature;
@@ -121,26 +122,31 @@ int get_full_number(int start_ind, char* str) {
 }
 
 void get_range_of_data(int size) {
-    t_data_dht data[size + 1];
-    char buff[20];
+    t_data_dht data[60 + 1];
+    char buff[25];
     int count = 0;
-
-    for(int i = 0; i < size && xQueueReceive(ram, &data[i], CMD_MAX_LEN) == pdTRUE; i++) {
-        bzero(&buff, 20);
-        sprintf(&buff, "\n\rTime ago - %d s", data[i].time_secs);
-        uart_write_bytes(UART_NUM_2, buff, strlen(buff));
-        bzero(&buff, 20);
-        sprintf(&buff, "\n\rTemperatue - %d c", data[i].temperature);
-        uart_write_bytes(UART_NUM_2, buff, strlen(buff));
-        bzero(&buff, 20);
-        sprintf(&buff, "\n\rHumidity - %d %%\n\r", data[i].humidity);
-        uart_write_bytes(UART_NUM_2, buff, strlen(buff));
+    
+    void vTaskSuspendAll();
+    for(int i = 0; i < 60 && xQueueReceive(ram, &data[i], CMD_MAX_LEN) == pdTRUE; i++) {
         data[i + 1].humidity = 0;
         count++;
     }
+    size = count - size;
     for(count--; count >= 0; count--) {
+        if(count >= size) {
+            bzero(&buff, 25);
+            sprintf(&buff, "\n\rTime ago - %d s", time_secs_general - (5 + data[count].time_secs));
+            uart_write_bytes(UART_NUM_2, buff, strlen(buff));
+            bzero(&buff, 20);
+            sprintf(&buff, "\n\rTemperatue - %d c", data[count].temperature);
+            uart_write_bytes(UART_NUM_2, buff, strlen(buff));
+            bzero(&buff, 20);
+            sprintf(&buff, "\n\rHumidity - %d %%\n\r", data[count].humidity);
+            uart_write_bytes(UART_NUM_2, buff, strlen(buff));
+        }
         xQueueSendToFront(ram, &data[count], 5);
     }
+    portBASE_TYPE xTaskResumeAll();
 }
 
 void handle_cmd(void *pvParameters) {
@@ -198,7 +204,7 @@ void input_getter(void *pvParameters) {
         xQueueSendToBack(queue, &buff, 0);
         if(xQueueReceive(error, &err, 5) != errQUEUE_EMPTY) {
             uart_write_bytes(UART_NUM_2, "\n\r", 2);
-            uart_write_bytes(UART_NUM_2, err, strlen((char*)err));
+            uart_write_bytes(UART_NUM_2, (char*)err, strlen((char*)err));
 
             text_pick = "\e[0;31m> \e[0;39m";
         }
@@ -206,6 +212,7 @@ void input_getter(void *pvParameters) {
             text_pick = "\e[0;32m> \e[0;39m";
         }
         uart_write_bytes(UART_NUM_2, "\n\r", 2);
+        vTaskDelay(5 / portTICK_PERIOD_MS);
     }
 }
 
