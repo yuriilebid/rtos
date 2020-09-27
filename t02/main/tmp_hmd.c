@@ -1,46 +1,4 @@
-#include <stdio.h>
-#include "driver/gpio.h"
-#include <stdlib.h>
-#include <stdbool.h>
-#include <string.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_system.h"
-#include "esp_spi_flash.h"
-#include "driver/ledc.h"
-#include "driver/timer.h"
-#include "driver/uart.h"
-#include "freertos/timers.h"
-
-#define DHT11_POWER 2
-#define DHT11_DATA  4
-
-#define TXPIN 16
-#define RXPIN 17
-
-#define LF_ASCII_CODE 13
-
-#define CMD_MAX_LEN 20
-#define ERR_MAX_LEN 40
-#define HISTORY_SIZE 60
-
-QueueHandle_t queue = NULL;
-QueueHandle_t ram = NULL;
-QueueHandle_t error = NULL;
-
-bool command_line_status = true;
-
-int time_secs_general = 0;
-int time_secs_current = 0;
-
-typedef struct data_dht {
-    int temperature;
-    int humidity;
-    int time_secs;
-    int time_mins;
-    int time_hours;
-} t_data_dht;
-
+#include "tmp_hmd.h"
 
 /*
  * @Function : 
@@ -132,7 +90,7 @@ void weather(void *pvParameters) {
             printf("Invalid sum\n");
         }
         printf("temp = %d\n", data[2]);
-        vTaskDelay(3500 / portTICK_PERIOD_MS);
+        vTaskDelay(350);
         measure.temperature = data[2];
         measure.humidity = data[0];
         measure.time_secs = time_secs_general;
@@ -215,12 +173,14 @@ void get_range_of_data(int size) {
     char buff[25];
     int count = 0;
     
+    vTaskSuspendAll();
     if(size > uxQueueMessagesWaiting(ram) || size <= 0) {
         error_handler("\e[1m\e[0;31mInvalid logs range\e[0;39m Available 1 <= range <= 60", true);
     }
     else {
         error_handler("\e[1m\e[0;32mShowing range logs\e[0;39m", false);
     }
+    vTaskSuspend(xTaskWeather);
     for(int i = 0; i < 60 && xQueueReceive(ram, &data[i], CMD_MAX_LEN) == pdTRUE; i++) {
         data[i + 1].humidity = 0;
         count++;
@@ -241,6 +201,7 @@ void get_range_of_data(int size) {
         }
         xQueueSendToFront(ram, &data[count], 5);
     }
+    vTaskResume(xTaskWeather);
     command_line_status = true;
 }
 
@@ -358,29 +319,6 @@ void input_getter(void *pvParameters) {
     }
 }
 
-
-/*
- * @Function : 
- *             app_main
- *
- * @Description : 
- *                Measure temperature and humidity every 5 seconds.
- *                Store Last 60 measurements with timestamps
- *                Get access to get logs with UART console
- *
- * @Example :
- *            >> get logs 2
- *            Showing range logs
- *            Time ago - 0 s
- *            Temperatue - 28 c
- *            Humidity - 39 %
- *
- *            Time ago - 5 s
- *            Temperatue - 28 c
- *            Humidity - 39 %
- *       
-*/
-
 void app_main() {
     queue = xQueueCreate(1, CMD_MAX_LEN);
     error = xQueueCreate(1, ERR_MAX_LEN);
@@ -402,7 +340,7 @@ void app_main() {
     gpio_set_direction(DHT11_POWER, GPIO_MODE_OUTPUT);
     gpio_set_level(DHT11_POWER, 1);
 
-    xTaskCreate(weather, "weather", 4048u, NULL, 2, NULL);
+    xTaskCreate(weather, "weather", 4048u, NULL, 2, &xTaskWeather);
     xTaskCreate(input_getter, "input_getter", 4048u, NULL, 1, NULL);
     xTaskCreate(handle_cmd, "handle_cmd", 4048u, NULL, 1, NULL);
 }
