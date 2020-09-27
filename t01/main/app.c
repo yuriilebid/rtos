@@ -172,12 +172,6 @@ void input_getter(void *pvParameters) {
         for(int ind = 0; ind < (CMD_MAX_LEN - 1) && !end_cmd;) {
             uart_flush_input(UART_NUM_2);
             int exit = uart_read_bytes(UART_NUM_2, &buff[ind], 1, (200 / portTICK_PERIOD_MS));
-            // if(buff[ind] == 27) {
-            //     uart_read_bytes(UART_NUM_2, &buff[ind], 1, (200 / portTICK_PERIOD_MS));
-            //     uart_read_bytes(UART_NUM_2, &buff[ind], 1, (200 / portTICK_PERIOD_MS));
-            //     printf("%d\n", buff[ind]);
-            //     printf("%d\n\n", buff[ind]);
-            // }
             if(exit == 1) {
                 char *tmp = (char *)&buff[ind];
                 if(buff[ind] == LF_ASCII_CODE) {

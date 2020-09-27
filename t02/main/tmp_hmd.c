@@ -18,7 +18,7 @@
 #define TXPIN 16
 #define RXPIN 17
 
-#define LF_ASCII_CODE 13    // Enter button
+#define LF_ASCII_CODE 13
 
 #define CMD_MAX_LEN 20
 #define ERR_MAX_LEN 40
@@ -27,6 +27,8 @@
 QueueHandle_t queue = NULL;
 QueueHandle_t ram = NULL;
 QueueHandle_t error = NULL;
+
+bool command_line_status = true;
 
 int time_secs_general = 0;
 int time_secs_current = 0;
@@ -39,6 +41,22 @@ typedef struct data_dht {
     int time_hours;
 } t_data_dht;
 
+
+/*
+ * @Function : 
+ *            wait_status
+ *
+ * @Parameters : 
+ *              status        - voltage status (HIGH or LOW)
+ *
+ * @Description : 
+ *               Loop waits, until voltage of DHT11_DATA(temperature)
+ *               gets level of a parameters.
+ *
+ * @Return : 
+ *          count        - amount of loop goes 
+*/
+
 int wait_status(_Bool status) {
     int count = 0;
 
@@ -48,6 +66,16 @@ int wait_status(_Bool status) {
     }
     return count;
 }
+
+
+/*
+ * @Function : 
+ *             preparing_for_receiving_data
+ *
+ * @Description : 
+ *                Waits 1.5 seconds for temperature device to measure 
+ *                data, and gives access to send this data to board.
+*/
 
 void preparing_for_receiving_data() {
     gpio_set_direction(DHT11_DATA,  GPIO_MODE_OUTPUT);
@@ -63,19 +91,29 @@ void preparing_for_receiving_data() {
     wait_status(1);
 }
 
+
+/*
+ * @Function : 
+ *             weather
+ *
+ * @Parameters : 
+ *               pvParameters        - NULL (needs to be a vTask)
+ *
+ * @Description : 
+ *                Gets measued data form DHT11 (temperature) and
+ *                sends it to <Ram> queue.
+*/
+
 void weather(void *pvParameters) {
     int res = 0;
     uint8_t data[5];
 
     while(true) {
-        // printf("\n\nError weather 0\n\n");
         t_data_dht measure;
         t_data_dht *dummy_buf;
 
         bzero(&data, sizeof(data));
-        // printf("\n\nError weather 1\n\n");
         preparing_for_receiving_data();
-        // printf("\n\nError weather 2\n\n");
         for (int i = 1, j = 0; i < 41; i++) {
             wait_status(0);
             res = wait_status(1);
@@ -90,7 +128,6 @@ void weather(void *pvParameters) {
                 j++;
             }
         }
-        // printf("\n\nError weather 3\n\n");
         if (data[0] + data[1] + data[2] + data[3] != data[4]) {
             printf("Invalid sum\n");
         }
@@ -109,6 +146,23 @@ void weather(void *pvParameters) {
     vTaskDelete(NULL);
 }
 
+
+/*
+ * @Function : 
+ *             get_full_number
+ *
+ * @Parameters : 
+ *               start_ind        - index to start reading number in string
+ *               str              - string where we want to search a number
+ *
+ * @Description : 
+                  Gets a number from from string, with a given start of digit
+ *                in string.
+ *
+ * @Return : 
+ *           number        - found number in string
+*/
+
 int get_full_number(int start_ind, char* str) {
     int number;
     char buff[12];
@@ -121,17 +175,58 @@ int get_full_number(int start_ind, char* str) {
     return number;
 }
 
+
+/*
+ * @Function : 
+*              error_handler
+ *
+ * @Parameters : 
+ *               str_error        - string, to output in console as log
+ *               status           - bool value, true if error ocurred
+ *
+ * @Description : 
+ *                Print in UART console a given string and sends to queue
+ *                "error" message to notify, that something went wrong.
+*/
+
+void error_handler(char *str_error, bool status) {
+    uart_write_bytes(UART_NUM_2, "\n\r", 5);
+    uart_write_bytes(UART_NUM_2, str_error, strlen(str_error));
+    if(status == true) {
+        xQueueSendToFront(error, "error", 5);
+    }
+}
+
+
+/*
+ * @Function : 
+ *             get_range_of_data
+ *
+ * @Parameters : 
+ *               size        - amount of logs to output
+ *
+ * @Description : 
+ *                Prints specific amount of temperature and humidity measures
+ *                with timestamps.
+*/
+
 void get_range_of_data(int size) {
     t_data_dht data[60 + 1];
     char buff[25];
     int count = 0;
     
-    void vTaskSuspendAll();
+    if(size > uxQueueMessagesWaiting(ram) || size <= 0) {
+        error_handler("\e[1m\e[0;31mInvalid logs range\e[0;39m Available 1 <= range <= 60", true);
+    }
+    else {
+        error_handler("\e[1m\e[0;32mShowing range logs\e[0;39m", false);
+    }
     for(int i = 0; i < 60 && xQueueReceive(ram, &data[i], CMD_MAX_LEN) == pdTRUE; i++) {
         data[i + 1].humidity = 0;
         count++;
     }
     size = count - size;
+    command_line_status = false;
     for(count--; count >= 0; count--) {
         if(count >= size) {
             bzero(&buff, 25);
@@ -146,8 +241,50 @@ void get_range_of_data(int size) {
         }
         xQueueSendToFront(ram, &data[count], 5);
     }
-    portBASE_TYPE xTaskResumeAll();
+    command_line_status = true;
 }
+
+
+/*
+ * @Function : 
+ *             command_line_arrow
+ *
+ * @Description : 
+ *                Set color of command line arrow ">"
+ *                - green if no errors
+ *                - red if errors ocurred
+ *                and writes it to UART console.
+*/
+
+void command_line_arrow() {
+    uint8_t err[CMD_MAX_LEN];
+    char* text_pick = "> ";
+    char cmd[CMD_MAX_LEN];
+    bzero(&cmd, CMD_MAX_LEN);
+    bzero(&err, CMD_MAX_LEN);
+
+    if(xQueueReceive(error, &err, 5) != errQUEUE_EMPTY) {
+        text_pick = "\e[0;31m> \e[0;39m";
+    }
+    else {
+        text_pick = "\e[0;32m> \e[0;39m";
+    }
+    uart_write_bytes(UART_NUM_2, "\n\r", 2);
+    uart_write_bytes(UART_NUM_2, text_pick, strlen(text_pick));
+}
+
+
+/*
+ * @Function : 
+ *             handle_cmd
+ *
+ * @Parameters : 
+ *               pvParameters        - NULL (needs to be a vTask)
+ *
+ * @Description : 
+ *                Manage witch function to call according to
+ *                console input.
+*/
 
 void handle_cmd(void *pvParameters) {
     while(true) {
@@ -159,23 +296,37 @@ void handle_cmd(void *pvParameters) {
         if(strstr(cmd, "get logs") == cmd)  {
             int amount = get_full_number(9, cmd);
             get_range_of_data(amount);
+            command_line_arrow();
+
         }
+        else if(command_line_status == true) {
+            command_line_arrow();
+        }
+        command_line_status = false;
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 }
 
+
+/*
+ * @Function : 
+ *             input_getter
+ *
+ * @Parameters : 
+ *               pvParameters        - NULL (needs to be a vTask)
+ *
+ * @Description : Gets input from UART console with managin function buttons.
+ *                Sends input to queue "queue".
+*/
+
 void input_getter(void *pvParameters) {
     uint8_t buff[CMD_MAX_LEN];
-    uint8_t err[ERR_MAX_LEN];
-    char* text_pick = "> ";
 
     while(true) {
         char *request = NULL;
         bool end_cmd = false;
 
         bzero(buff, CMD_MAX_LEN);
-        bzero(err, ERR_MAX_LEN);
-        uart_write_bytes(UART_NUM_2, text_pick, strlen(text_pick));
         for(int ind = 0; ind < (CMD_MAX_LEN - 1) && !end_cmd;) {
             uart_flush_input(UART_NUM_2);
             int exit = uart_read_bytes(UART_NUM_2, &buff[ind], 1, (200 / portTICK_PERIOD_MS));
@@ -201,20 +352,34 @@ void input_getter(void *pvParameters) {
                 vTaskDelay(5 / portTICK_PERIOD_MS);
             }
         }
+        command_line_status = true;
         xQueueSendToBack(queue, &buff, 0);
-        if(xQueueReceive(error, &err, 5) != errQUEUE_EMPTY) {
-            uart_write_bytes(UART_NUM_2, "\n\r", 2);
-            uart_write_bytes(UART_NUM_2, (char*)err, strlen((char*)err));
-
-            text_pick = "\e[0;31m> \e[0;39m";
-        }
-        else {
-            text_pick = "\e[0;32m> \e[0;39m";
-        }
-        uart_write_bytes(UART_NUM_2, "\n\r", 2);
         vTaskDelay(5 / portTICK_PERIOD_MS);
     }
 }
+
+
+/*
+ * @Function : 
+ *             app_main
+ *
+ * @Description : 
+ *                Measure temperature and humidity every 5 seconds.
+ *                Store Last 60 measurements with timestamps
+ *                Get access to get logs with UART console
+ *
+ * @Example :
+ *            >> get logs 2
+ *            Showing range logs
+ *            Time ago - 0 s
+ *            Temperatue - 28 c
+ *            Humidity - 39 %
+ *
+ *            Time ago - 5 s
+ *            Temperatue - 28 c
+ *            Humidity - 39 %
+ *       
+*/
 
 void app_main() {
     queue = xQueueCreate(1, CMD_MAX_LEN);
