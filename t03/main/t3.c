@@ -33,6 +33,8 @@
 #define SH1106_PORT I2C_NUM_0
 #define TEST_WITHOUT_RELOAD   0        // testing will be done without auto reload
 #define TEST_WITH_RELOAD      1        // testing will be done with auto reload
+#define TIMER_INTERVAL0_SEC   (3.4179) // sample test interval for the first timer
+#define TIMER_INTERVAL1_SEC   (5.78)   // sample test interval for the second timer
 
 static int HOURS = 0;
 static int MINUTES = 0;
@@ -54,6 +56,7 @@ QueueHandle_t error = NULL;
 
 int time_secs_general = 0;
 int time_secs_current = 0;
+int timer_index = TIMER_1;
 
 typedef struct {
     int type;  // the type of timer's event
@@ -214,77 +217,75 @@ void oled(void *pvParameters) {
     }
 }
 
-void IRAM_ATTR clock(void *para) {
-    printf("3 sec.\n");
+void IRAM_ATTR clock_isr(void *para) {
     timer_spinlock_take(TIMER_GROUP_0);
     printf("4 sec.\n");
     uint32_t timer_intr = timer_group_get_intr_status_in_isr(TIMER_GROUP_0);
-    uint64_t timer_counter_value = timer_group_get_counter_value_in_isr(TIMER_GROUP_0, TIMER_0);
+    uint64_t timer_counter_value = timer_group_get_counter_value_in_isr(TIMER_GROUP_0, timer_index);
     printf("5 sec.\n");
-    timer_event_t evt;
-    evt.timer_group = 0;
-    evt.timer_idx = 0;
-    evt.timer_counter_value = timer_counter_value;
+    // timer_event_t evt;
+    // evt.timer_group = 0;
+    // evt.timer_idx = timer_index;
+    // evt.timer_counter_value = timer_counter_value;
 
     /* Clear the interrupt
        and update the alarm time for the timer with without reload */
 
-    evt.type = TEST_WITHOUT_RELOAD;
-    timer_group_clr_intr_status_in_isr(TIMER_GROUP_0, TIMER_0);
-    timer_counter_value += (uint64_t) (1 * TIMER_SCALE);
-    timer_group_set_alarm_value_in_isr(TIMER_GROUP_0, TIMER_0, timer_counter_value);
+    // evt.type = TEST_WITHOUT_RELOAD;
+    // timer_group_clr_intr_status_in_isr(TIMER_GROUP_0, timer_index);
+    // timer_counter_value += (uint64_t) (1 * TIMER_SCALE);
+    // timer_group_set_alarm_value_in_isr(TIMER_GROUP_0, timer_index, timer_counter_value);
     // evt.type = 1;
-    // timer_group_clr_intr_status_in_isr(TIMER_GROUP_0, TIMER_0);
+    timer_group_clr_intr_status_in_isr(TIMER_GROUP_0, timer_index);
 
     /* After the alarm has been triggered
       we need enable it again, so it is triggered the next time */
-    timer_group_enable_alarm_in_isr(TIMER_GROUP_0, TIMER_0);
+    timer_group_enable_alarm_in_isr(TIMER_GROUP_0, timer_index);
 
     /* Now just send the event data back to the main program task */
-    xQueueSendFromISR(timer_queue, &evt, NULL);
+    // xQueueSendFromISR(timer_queue, &evt, NULL);
     timer_spinlock_give(TIMER_GROUP_0);
 }
 
 void time_output(void *param) {
     while(true) {
         timer_event_t evt;
-        double value;
+        double value = 0;
 
-        xQueueReceive(timer_queue, &evt, portMAX_DELAY);
-        timer_get_counter_time_sec(TIMER_GROUP_0, TIMER_0, &value);
-        printf("%lld\n", evt.timer_counter_value);
+        // xQueueReceive(timer_queue, &evt, portMAX_DELAY);
+        timer_get_counter_time_sec(TIMER_GROUP_0, timer_index, &value);
+        printf("%f\n", value);
         // printf();
+        vTaskDelay(10);
     }
 }
 
 void app_main() {
     timer_queue = xQueueCreate(10, sizeof(timer_event_t));
-    const timer_config_t clock_cfg = {
-        .alarm_en = TIMER_ALARM_EN,           // TIMER_ALARM_DIS
-        .counter_en = TIMER_PAUSE,            // TIMER_START
-        .intr_type = TIMER_INTR_LEVEL,        // TIMER_INTR_MAX
-        .auto_reload = TIMER_AUTORELOAD_DIS,   // TIMER_AUTORELOAD_DIS
-        .divider = TIMER_DIVIDER,             // Divisor of the incoming 80 MHz APB_CLK clock
-        .counter_dir = TIMER_COUNT_UP         // from 0 to ...
-
+    timer_config_t clock_cfg = {
+        .divider = TIMER_DIVIDER,
+        .counter_dir = TIMER_COUNT_UP,
+        .counter_en = TIMER_PAUSE,
+        .alarm_en = TIMER_ALARM_EN,
+        .auto_reload = TEST_WITH_RELOAD,
     };
     int timer_idx = 0;
-    if(timer_init(TIMER_GROUP_0, TIMER_0, &clock_cfg) != ESP_OK) {
+    if(timer_init(TIMER_GROUP_0, timer_index, &clock_cfg) != ESP_OK) {
         printf("Дзвiночок 0\n");
     }
-    if(timer_set_counter_value(TIMER_GROUP_0, TIMER_0, 0x00000000ULL) != ESP_OK) {
+    if(timer_set_counter_value(TIMER_GROUP_0, timer_index, 0) != ESP_OK) {
         printf("Дзвiночок 1\n");
     }
-    if(timer_set_alarm_value(TIMER_GROUP_0, TIMER_0, 1 * TIMER_SCALE) != ESP_OK) {     // means 5 sec.
+    if(timer_set_alarm_value(TIMER_GROUP_0, timer_index, (1) * TIMER_SCALE) != ESP_OK) {     // means 5 sec.
         printf("Дзвiночок 2\n");
     }
-    if(timer_enable_intr(TIMER_GROUP_0, TIMER_0) != ESP_OK) {
+    if(timer_enable_intr(TIMER_GROUP_0, timer_index) != ESP_OK) {
         printf("Дзвiночок 3\n");
     }
-    if(timer_isr_register(TIMER_GROUP_0, TIMER_0, clock, (void *) timer_idx, ESP_INTR_FLAG_IRAM, NULL) != ESP_OK) {
+    if(timer_isr_register(TIMER_GROUP_0, timer_index, clock_isr, NULL, ESP_INTR_FLAG_IRAM, NULL) != ESP_OK) {
         printf("Дзвiночок 4\n");
     }
-    if(timer_start(TIMER_GROUP_0, TIMER_0) != ESP_OK) {
+    if(timer_start(TIMER_GROUP_0, timer_index) != ESP_OK) {
         printf("Дзвiночок 5\n");
     }
     xTaskCreate(time_output, "time_output", 2048, NULL, 5, NULL);
