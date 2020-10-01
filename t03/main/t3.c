@@ -31,10 +31,13 @@
 #define GPIO_SCL GPIO_NUM_22
 #define SH1106_ADDR 0x3C        // Deafault sh1106  address
 #define SH1106_PORT I2C_NUM_0
-#define TEST_WITHOUT_RELOAD   0        // testing will be done without auto reload
-#define TEST_WITH_RELOAD      1        // testing will be done with auto reload
+
+#define TIMER_DIVIDER         16  //  Hardware timer clock divider
+#define TIMER_SCALE           (TIMER_BASE_CLK / TIMER_DIVIDER)  // convert counter value to seconds
 #define TIMER_INTERVAL0_SEC   (3.4179) // sample test interval for the first timer
 #define TIMER_INTERVAL1_SEC   (5.78)   // sample test interval for the second timer
+#define TEST_WITHOUT_RELOAD   0        // testing will be done without auto reload
+#define TEST_WITH_RELOAD      1        // testing will be done with auto reload
 
 static int HOURS = 0;
 static int MINUTES = 0;
@@ -47,6 +50,12 @@ typedef struct {
     uint16_t changes;
 } sh1106_t;
 
+typedef struct {
+    int seconds;  // the type of timer's event
+    int minutes;
+    int hours;
+} timer_event_t;
+
 #define TIMER_DIVIDER         16  //  Hardware timer clock divider
 #define TIMER_SCALE           (TIMER_BASE_CLK / TIMER_DIVIDER)  // convert counter value to seconds
 
@@ -58,12 +67,14 @@ int time_secs_general = 0;
 int time_secs_current = 0;
 int timer_index = TIMER_1;
 
-typedef struct {
-    int type;  // the type of timer's event
-    int timer_group;
-    int timer_idx;
-    uint64_t timer_counter_value;
-} timer_event_t;
+uint32_t mins = 0x00000000;
+uint32_t hours = 0x00000000;
+uint32_t ulNotifiedValueSecs;
+
+bool write = false;
+
+TaskHandle_t xTaskTimeOutput;
+TaskHandle_t xTaskOledOutput;
 
 xQueueHandle timer_queue;
 
@@ -192,9 +203,70 @@ void print_string(char *str, sh1106_t *display, int size, int page) {
     }
 }
 
-void oled(void *pvParameters) {
-    sh1106_t display;
+static void IRAM_ATTR clock_isr(void *para) {
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    uint32_t timer_intr = timer_group_get_intr_status_in_isr(TIMER_GROUP_0);
+    uint64_t timer_counter_value = timer_group_get_counter_value_in_isr(TIMER_GROUP_0, timer_index);
+
+    xTaskNotifyFromISR(xTaskTimeOutput, 1, eIncrement, NULL);
+
+    timer_group_clr_intr_status_in_isr(TIMER_GROUP_0, timer_index);
+    timer_group_enable_alarm_in_isr(TIMER_GROUP_0, timer_index);
+    portYIELD_FROM_ISR();
+    return;
+}
+
+void clear_display(sh1106_t *display) {    
+    for(uint8_t y = 0; y < 64; y++) {
+        for(uint8_t x = 0; x < 128; x++) {
+            set_pixel_sh1106(&display, x, y, 0);
+        }
+    }
+}
+
+static void time_output(void *param) {
+    sh1106_t *display = (sh1106_t*)param;
     char buff[20];
+
+    while(true) {
+        xTaskNotifyWait(0x00000000, 0x00000000, &ulNotifiedValueSecs, portMAX_DELAY);
+        if(ulNotifiedValueSecs == 60) {
+            mins++;
+            ulNotifiedValueSecs = 0;
+        }
+        if(mins == 60) {
+            hours++;
+            mins = 0;
+        }
+        if(hours == 24) {
+            hours = 0;
+        }
+        bzero(&buff, 20);
+        clear_display(&display);
+        sprintf(&buff, "%d:%d:%d", ulNotifiedValueSecs, mins, hours);
+        print_string(buff, &display, 2, 3);
+        refresh_sh1106(&display);
+    }
+}
+
+void draw_image(void *param) {
+    sh1106_t *display = (sh1106_t*)param;
+    char buff[20];
+
+    while(true) {
+        if(write == true) {
+            bzero(&buff, 20);
+            clear_display(&display);
+            sprintf(&buff, "%d:%d:%d", ulNotifiedValueSecs, mins, hours);
+            print_string(buff, &display, 2, 3);
+            refresh_sh1106(&display);
+        }
+        vTaskDelay(20);
+    }
+}
+
+void app_main() {
+    sh1106_t display;
 
     gpio_set_direction(GPIO_NUM_32, GPIO_MODE_OUTPUT);
     gpio_set_level(GPIO_NUM_32, 1);
@@ -202,66 +274,8 @@ void oled(void *pvParameters) {
     display.addr = SH1106_ADDR;
     display.port = SH1106_PORT;
     init_sh1106(&display);
-    
-    refresh_sh1106(&display);
-    while(true) {
-        bzero(&buff, 20);
-        sprintf(&buff, "%d:%d:%d", HOURS, MINUTES, SECONDS);
-        for(uint8_t y = 0; y < 64; y++) {
-            for(uint8_t x = 0; x < 128; x++) {
-                set_pixel_sh1106(&display, x, y, 1);
-            }
-        }
-        print_string(buff, &display, 2, 3);
-        vTaskDelay(10);
-    }
-}
 
-void IRAM_ATTR clock_isr(void *para) {
-    timer_spinlock_take(TIMER_GROUP_0);
-    printf("4 sec.\n");
-    uint32_t timer_intr = timer_group_get_intr_status_in_isr(TIMER_GROUP_0);
-    uint64_t timer_counter_value = timer_group_get_counter_value_in_isr(TIMER_GROUP_0, timer_index);
-    printf("5 sec.\n");
-    // timer_event_t evt;
-    // evt.timer_group = 0;
-    // evt.timer_idx = timer_index;
-    // evt.timer_counter_value = timer_counter_value;
-
-    /* Clear the interrupt
-       and update the alarm time for the timer with without reload */
-
-    // evt.type = TEST_WITHOUT_RELOAD;
-    // timer_group_clr_intr_status_in_isr(TIMER_GROUP_0, timer_index);
-    // timer_counter_value += (uint64_t) (1 * TIMER_SCALE);
-    // timer_group_set_alarm_value_in_isr(TIMER_GROUP_0, timer_index, timer_counter_value);
-    // evt.type = 1;
-    timer_group_clr_intr_status_in_isr(TIMER_GROUP_0, timer_index);
-
-    /* After the alarm has been triggered
-      we need enable it again, so it is triggered the next time */
-    timer_group_enable_alarm_in_isr(TIMER_GROUP_0, timer_index);
-
-    /* Now just send the event data back to the main program task */
-    // xQueueSendFromISR(timer_queue, &evt, NULL);
-    timer_spinlock_give(TIMER_GROUP_0);
-}
-
-void time_output(void *param) {
-    while(true) {
-        timer_event_t evt;
-        double value = 0;
-
-        // xQueueReceive(timer_queue, &evt, portMAX_DELAY);
-        timer_get_counter_time_sec(TIMER_GROUP_0, timer_index, &value);
-        printf("%f\n", value);
-        // printf();
-        vTaskDelay(10);
-    }
-}
-
-void app_main() {
-    timer_queue = xQueueCreate(10, sizeof(timer_event_t));
+    timer_queue = xQueueCreate(10, sizeof(uint32_t));
     timer_config_t clock_cfg = {
         .divider = TIMER_DIVIDER,
         .counter_dir = TIMER_COUNT_UP,
@@ -288,7 +302,7 @@ void app_main() {
     if(timer_start(TIMER_GROUP_0, timer_index) != ESP_OK) {
         printf("Дзвiночок 5\n");
     }
-    xTaskCreate(time_output, "time_output", 2048, NULL, 5, NULL);
+    xTaskCreate(time_output, "time_output", 2048, (void*)&display, 3, &xTaskTimeOutput);
 }
 
 // reference to example - https://github.com/espressif/esp-idf/blob/master/examples/peripherals/timer_group/main/timer_group_example_main.c
