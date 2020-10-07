@@ -1,82 +1,12 @@
-#include <stdio.h>
-#include "driver/gpio.h"
-#include <stdlib.h>
-#include <stdbool.h>
-#include <string.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_system.h"
-#include "esp_spi_flash.h"
-#include "driver/ledc.h"
-#include "driver/timer.h"
-#include "driver/uart.h"
-#include "freertos/timers.h"
-#include "font6x8.h"
-#include "driver/i2c.h"
-#include <math.h>
+#include "t03.h"
 
-#define DHT11_POWER 2
-#define DHT11_DATA  4
-
-#define TXPIN 16
-#define RXPIN 17
-
-#define LF_ASCII_CODE 13        // Enter button
-
-#define CMD_MAX_LEN 20
-#define ERR_MAX_LEN 40
-#define HISTORY_SIZE 60
-
-#define GPIO_SDA GPIO_NUM_21
-#define GPIO_SCL GPIO_NUM_22
-#define SH1106_ADDR 0x3C        // Deafault sh1106  address
-#define SH1106_PORT I2C_NUM_0
-
-#define TIMER_DIVIDER         16  //  Hardware timer clock divider
-#define TIMER_SCALE           (TIMER_BASE_CLK / TIMER_DIVIDER)  // convert counter value to seconds
-#define TIMER_INTERVAL0_SEC   (3.4179) // sample test interval for the first timer
-#define TIMER_INTERVAL1_SEC   (5.78)   // sample test interval for the second timer
-#define TEST_WITHOUT_RELOAD   0        // testing will be done without auto reload
-#define TEST_WITH_RELOAD      1        // testing will be done with auto reload
-
-static int HOURS = 0;
-static int MINUTES = 0;
-static int SECONDS = 0;
-
-typedef struct {
-    uint8_t addr;
-    i2c_port_t port;
-    uint8_t grid[8][128];          // Pixesl grid (16 * byte(8 bit)) * 128
-    uint16_t changes;
-} sh1106_t;
-
-typedef struct {
-    int seconds;  // the type of timer's event
-    int minutes;
-    int hours;
-} timer_event_t;
-
-#define TIMER_DIVIDER         16  //  Hardware timer clock divider
-#define TIMER_SCALE           (TIMER_BASE_CLK / TIMER_DIVIDER)  // convert counter value to seconds
-
-QueueHandle_t queue = NULL;
-QueueHandle_t ram = NULL;
-QueueHandle_t error = NULL;
-
-int time_secs_general = 0;
-int time_secs_current = 0;
-int timer_index = TIMER_1;
-
-uint32_t mins = 0x00000000;
-uint32_t hours = 0x00000000;
-uint32_t ulNotifiedValueSecs;
-
-bool write = false;
-
-TaskHandle_t xTaskTimeOutput;
-TaskHandle_t xTaskOledOutput;
-
-xQueueHandle timer_queue;
+/*
+ * @Function : 
+ *            init_i2c
+ *
+ * @Description : 
+ *               Configurates i2c interface. I2C used for display(sh1106)
+*/
 
 void init_i2c() {
     i2c_config_t i2c_config = {
@@ -91,10 +21,19 @@ void init_i2c() {
     i2c_driver_install(SH1106_PORT, I2C_MODE_MASTER, 0, 0, 0);
 }
 
-void init_sh1106(sh1106_t *display) {
+
+/*
+ * @Function : 
+ *            init_sh1106
+ *
+ * @Description : 
+ *               Configurates display(sh1106) settings
+*/
+
+void init_sh1106() {
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
     i2c_master_start(cmd);                   // addind start 3 bits 010
-    i2c_master_write_byte(cmd, (display->addr << 1) | I2C_MASTER_WRITE, true);  // Slave address adding
+    i2c_master_write_byte(cmd, (display.addr << 1) | I2C_MASTER_WRITE, true);  // Slave address adding
     i2c_master_write_byte(cmd, 0x00, true); // command stream
     i2c_master_write_byte(cmd, 0xAE, true); // off
     i2c_master_write_byte(cmd, 0xD5, true); // clock div
@@ -115,43 +54,95 @@ void init_sh1106(sh1106_t *display) {
     i2c_master_write_byte(cmd, 0xFF, true);
     i2c_master_write_byte(cmd, 0xAF, true); // on
     i2c_master_stop(cmd);
-    i2c_master_cmd_begin(display->port, cmd, 10 / portTICK_PERIOD_MS);
+    i2c_master_cmd_begin(display.port, cmd, 10 / portTICK_PERIOD_MS);
     i2c_cmd_link_delete(cmd);
 }
 
-void set_pixel_sh1106(sh1106_t *display, uint8_t x, uint8_t y, bool pixel_status) {
+
+/*
+ * @Function : 
+ *            set_pixel_sh1106
+ *
+ * @Parameters : 
+ *              x                - position of horisontal line of display(dht1106)
+ *              y                - position of vertical line of display(dht1106)
+ *              pixel_status     - <true> to light on pixel, <false>  to light off
+ *
+ * @Description : 
+ *               Sets pixel status (on/off) in display array of pixels
+*/
+
+void set_pixel_sh1106(uint8_t x, uint8_t y, bool pixel_status) {
     uint8_t page = y / 8;
 
     if(pixel_status == true) {
-        display->grid[page][x] |= (1 << (y % 8));
+        display.grid[page][x] |= (1 << (y % 8));
     }
     else {
-        display->grid[page][x] &= ~(1 << (y % 8));
+        display.grid[page][x] &= ~(1 << (y % 8));
     }
-    display->changes |= (1 << page);
+    display.changes |= (1 << page);
 }
 
-void print_page(sh1106_t *display, uint8_t page) {
+
+/*
+ * @Function : 
+ *            print_page
+ *
+ * @Parameters : 
+ *              page        - Each 8 horizontal lines, of display(dht1106) (128 X 8 pixels)
+ *
+ * @Description : 
+ *               Updates one page of display (128 X 8 pixels) with array <display.grid>
+*/
+
+void print_page(uint8_t page) {
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
     i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (display->addr << 1) | I2C_MASTER_WRITE, true);
+    i2c_master_write_byte(cmd, (display.addr << 1) | I2C_MASTER_WRITE, true);
     i2c_master_write_byte(cmd, 0x80, true);                // single command
     i2c_master_write_byte(cmd, 0xB0 + page, true);         // Goes to our page
     i2c_master_write_byte(cmd, 0x40, true);                // set display start line
-    i2c_master_write(cmd, display->grid[page], 128, true);
+    i2c_master_write(cmd, display.grid[page], 128, true);
     i2c_master_stop(cmd);
-    i2c_master_cmd_begin(display->port, cmd, 10 / portTICK_PERIOD_MS);
+    i2c_master_cmd_begin(display.port, cmd, 10 / portTICK_PERIOD_MS);
     i2c_cmd_link_delete(cmd);
 }
 
-void refresh_sh1106(sh1106_t *display) {
+
+/*
+ * @Function : 
+ *            refresh_sh1106
+ *
+ * @Description : 
+ *               updates all display with array <display.grid>
+*/
+
+void refresh_sh1106() {
     for(uint8_t y_page = 0; y_page < 16; y_page++) {
-        if (display->changes & (1 << y_page)) {
-            print_page(display, y_page);
+        if (display.changes & (1 << y_page)) {
+            print_page(y_page);
         }       
     }
-    display->changes = 0x0000;
+    display.changes = 0x0000;
 }
+
+
+/*
+ * @Function : 
+ *            dewrite_byte
+ *
+ * @Parameters : 
+ *              num        - Index of ASCII symbol from font6x8.h
+ *              up         - Part of symbol to overwrite, <true> if upper byte
+ *                           <fasle> if lower byte
+ *
+ * @Description : 
+ *               Upscales symbol X2 from 6 X 8 to 12 X 16
+ *
+ * @Return : 
+ *          result        - byte, witch represents 1/2 of symbol
+*/
 
 uint8_t dewrite_byte(uint8_t num, bool up) {
     uint8_t result = 0x00;
@@ -174,7 +165,25 @@ uint8_t dewrite_byte(uint8_t num, bool up) {
     return result;
 }
 
-void print_char(char ch, sh1106_t *display, uint8_t x_str, int size, int page) {
+
+/*
+ * @Function : 
+ *            print_char
+ *
+ * @Parameters : 
+ *              ch            - Index of ASCII symbol from font6x8.h
+ *              x_str         - Index of position on horizontal line of display (dht1106)
+ *              size          - Size of symbol to print (<1> - 6 X 8; 
+ *                                                       <2> - 12 X 16);
+ *              page          - Each 8 horizontal lines, of display(dht1106) (128 X 8 pixels)
+ *                              Select line to print on
+ *
+ * @Description : 
+ *               Prints symbol on display
+ *
+*/
+
+void print_char(char ch, uint8_t x_str, int size, int page) {
     int index = (ch - 32) * 6;
     uint8_t y_str = 0;
 
@@ -184,98 +193,168 @@ void print_char(char ch, sh1106_t *display, uint8_t x_str, int size, int page) {
     }
     if(size == 1) {
         for(uint8_t x = 0; x < 6; x++) {
-            display->grid[page + y_str][x + x_str * 6] |=  (font6x8[index + x]);
+            display.grid[page + y_str][x + x_str * 6] |=  (font6x8[index + x]);
         }
     }
     if(size == 2) {
         for(uint8_t x = 0; x < 12; x++) {
-            display->grid[page + y_str][x + x_str * 12] |=  dewrite_byte(font6x8[index + x / 2], true);
-            display->grid[page + y_str + 1][x + x_str * 12] |=  dewrite_byte(font6x8[index + x / 2], false);
+            display.grid[page + y_str][x + x_str * 12] |=  dewrite_byte(font6x8[index + x / 2], true);
+            display.grid[page + y_str + 1][x + x_str * 12] |=  dewrite_byte(font6x8[index + x / 2], false);
         }
     }
 }
 
-void print_string(char *str, sh1106_t *display, int size, int page) {
+
+/*
+ * @Function : 
+ *            print_string
+ *
+ * @Parameters : 
+ *              str           - String to print on display
+ *              size          - Size of symbols to print (<1> - 6 X 8; 
+ *                                                       <2> - 12 X 16);
+ *              page          - Each 8 horizontal lines, of display(dht1106) (128 X 8 pixels)
+ *                              Select line to print on
+ *
+ * @Description : 
+ *               Prints symbol on display
+ *
+*/
+
+void print_string(char *str, int size, int page) {
     int len = strlen(str);
 
     for(uint8_t i = 0; i < len; i++) {
-        print_char(str[i], display, i, size, page);
+        print_char(str[i], i, size, page);
     }
 }
+
+
+/*
+ * @Function : 
+ *            clock_isr
+ *
+ * @Parameters : 
+ *              para        - NULL (needs to be an interrupt function)
+ *
+ * @Description : 
+ *               Notifies about timers counts to 1 seconds to main task. Set timers to default value
+ *               and starts it again
+*/
 
 static void IRAM_ATTR clock_isr(void *para) {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     uint32_t timer_intr = timer_group_get_intr_status_in_isr(TIMER_GROUP_0);
     uint64_t timer_counter_value = timer_group_get_counter_value_in_isr(TIMER_GROUP_0, timer_index);
 
-    xTaskNotifyFromISR(xTaskTimeOutput, 1, eIncrement, NULL);
+    xTaskNotifyFromISR(xTaskTimeOutput, 1, eNoAction, NULL);
 
     timer_group_clr_intr_status_in_isr(TIMER_GROUP_0, timer_index);
     timer_group_enable_alarm_in_isr(TIMER_GROUP_0, timer_index);
     portYIELD_FROM_ISR();
-    return;
 }
 
-void clear_display(sh1106_t *display) {    
+
+/*
+ * @Function : 
+ *            clear_display
+ *
+ * @Description : 
+ *               clear array of display(dht1106)
+*/
+
+void clear_display() {    
     for(uint8_t y = 0; y < 64; y++) {
         for(uint8_t x = 0; x < 128; x++) {
-            set_pixel_sh1106(&display, x, y, 0);
+            set_pixel_sh1106(x, y, 0);
         }
     }
 }
 
-static void time_output(void *param) {
-    sh1106_t *display = (sh1106_t*)param;
+
+/*
+ * @Function : 
+ *            set_time
+ *
+ * @Description : 
+ *               Change global variables <seconds> <minutes> <hours>
+ *               according to change of seconds
+*/
+
+void set_time() {
+    if(seconds >= 60) {
+        MINUTES++;
+        seconds = 0;
+    }
+    if(MINUTES >= 60) {
+        HOURS++;
+        MINUTES = 0;
+    }
+    if(HOURS >= 24) {
+        HOURS = 0;
+    }
+}
+
+
+/*
+ * @Function : 
+ *             command_line_arrow
+ *
+ * @Description : 
+ *                Set color of command line arrow ">"
+ *                - green if no errors
+ *                - red if errors ocurred
+ *                and writes it to UART console.
+*/
+
+void command_line_arrow() {
+    uint8_t err[CMD_MAX_LEN];
+    char* text_pick = "> ";
+    char cmd[CMD_MAX_LEN];
+    bzero(&cmd, CMD_MAX_LEN);
+    bzero(&err, CMD_MAX_LEN);
+
+    if(xQueueReceive(error, &err, 5) != errQUEUE_EMPTY) {
+        text_pick = "\e[0;31m> \e[0;39m";
+    }
+    else {
+        text_pick = "\e[0;32m> \e[0;39m";
+    }
+    uart_write_bytes(UART_NUM_2, "\n\r", 2);
+    uart_write_bytes(UART_NUM_2, text_pick, strlen(text_pick));
+}
+
+
+/*
+ * @Function : 
+ *            draw_image
+ *
+ * @Description : 
+ *               Sets new time string on display(dht1106)
+*/
+
+void draw_image() {
     char buff[20];
 
-    while(true) {
-        xTaskNotifyWait(0x00000000, 0x00000000, &ulNotifiedValueSecs, portMAX_DELAY);
-        if(ulNotifiedValueSecs == 60) {
-            mins++;
-            ulNotifiedValueSecs = 0;
-        }
-        if(mins == 60) {
-            hours++;
-            mins = 0;
-        }
-        if(hours == 24) {
-            hours = 0;
-        }
-        bzero(&buff, 20);
-        clear_display(&display);
-        sprintf(&buff, "%d:%d:%d", ulNotifiedValueSecs, mins, hours);
-        print_string(buff, &display, 2, 3);
-        refresh_sh1106(&display);
-    }
+    bzero(&buff, 20);
+    set_time();
+    clear_display();
+    sprintf(&buff, "  %d:%d:%d", HOURS, MINUTES, seconds);
+    print_string(buff , 2, 3);
+    refresh_sh1106();
 }
 
-void draw_image(void *param) {
-    sh1106_t *display = (sh1106_t*)param;
-    char buff[20];
 
-    while(true) {
-        if(write == true) {
-            bzero(&buff, 20);
-            clear_display(&display);
-            sprintf(&buff, "%d:%d:%d", ulNotifiedValueSecs, mins, hours);
-            print_string(buff, &display, 2, 3);
-            refresh_sh1106(&display);
-        }
-        vTaskDelay(20);
-    }
-}
+/*
+ * @Function : 
+ *            timer_initialisation
+ *
+ * @Description : 
+ *               Configures time to count up for 1 seconds, and use function <clock_isr>
+ *               as an interrupt to notify changes of timer
+*/
 
-void app_main() {
-    sh1106_t display;
-
-    gpio_set_direction(GPIO_NUM_32, GPIO_MODE_OUTPUT);
-    gpio_set_level(GPIO_NUM_32, 1);
-    init_i2c();
-    display.addr = SH1106_ADDR;
-    display.port = SH1106_PORT;
-    init_sh1106(&display);
-
-    timer_queue = xQueueCreate(10, sizeof(uint32_t));
+void timer_initialisation() {
     timer_config_t clock_cfg = {
         .divider = TIMER_DIVIDER,
         .counter_dir = TIMER_COUNT_UP,
@@ -283,50 +362,200 @@ void app_main() {
         .alarm_en = TIMER_ALARM_EN,
         .auto_reload = TEST_WITH_RELOAD,
     };
-    int timer_idx = 0;
-    if(timer_init(TIMER_GROUP_0, timer_index, &clock_cfg) != ESP_OK) {
-        printf("Дзвiночок 0\n");
-    }
-    if(timer_set_counter_value(TIMER_GROUP_0, timer_index, 0) != ESP_OK) {
-        printf("Дзвiночок 1\n");
-    }
-    if(timer_set_alarm_value(TIMER_GROUP_0, timer_index, (1) * TIMER_SCALE) != ESP_OK) {     // means 5 sec.
-        printf("Дзвiночок 2\n");
-    }
-    if(timer_enable_intr(TIMER_GROUP_0, timer_index) != ESP_OK) {
-        printf("Дзвiночок 3\n");
-    }
-    if(timer_isr_register(TIMER_GROUP_0, timer_index, clock_isr, NULL, ESP_INTR_FLAG_IRAM, NULL) != ESP_OK) {
-        printf("Дзвiночок 4\n");
-    }
-    if(timer_start(TIMER_GROUP_0, timer_index) != ESP_OK) {
-        printf("Дзвiночок 5\n");
-    }
-    xTaskCreate(time_output, "time_output", 2048, (void*)&display, 3, &xTaskTimeOutput);
+    timer_init(TIMER_GROUP_0, timer_index, &clock_cfg);
+    timer_set_counter_value(TIMER_GROUP_0, timer_index, 0);
+    timer_set_alarm_value(TIMER_GROUP_0, timer_index, (1) * TIMER_SCALE);
+    timer_enable_intr(TIMER_GROUP_0, timer_index);
+    timer_isr_register(TIMER_GROUP_0, timer_index, clock_isr, NULL, ESP_INTR_FLAG_IRAM, NULL);
+    timer_start(TIMER_GROUP_0, timer_index);
 }
 
-// reference to example - https://github.com/espressif/esp-idf/blob/master/examples/peripherals/timer_group/main/timer_group_example_main.c
+
+/*
+ * @Function : 
+ *            wait_status
+ *
+ * @Parameters : 
+ *              param        - NULL (needs to be a vTask)
+ *
+ * @Description : 
+ *               Call display updates each interrupt(1 second)
+*/
+
+void time_output(void *param) {
+    timer_initialisation();
+
+    while(true) {
+        xTaskNotifyWait(0x00000000, 0x00000000, NULL, portMAX_DELAY);
+        seconds++;
+        draw_image();
+    }
+}
 
 
+/*
+ * @Function : 
+ *             input_getter
+ *
+ * @Parameters : 
+ *               pvParameters        - NULL (needs to be a vTask)
+ *
+ * @Description : Gets input from UART console with managin function buttons.
+ *                Sends input to queue "queue".
+*/
+
+void input_getter(void *pvParameters) {
+    uint8_t buff[CMD_MAX_LEN];
+
+    while(true) {
+        char *request = NULL;
+        bool end_cmd = false;
+
+        bzero(buff, CMD_MAX_LEN);
+        for(int ind = 0; ind < (CMD_MAX_LEN - 1) && !end_cmd;) {
+            uart_flush_input(UART_NUM_2);
+            int exit = uart_read_bytes(UART_NUM_2, &buff[ind], 1, (200 / portTICK_PERIOD_MS));
+            if(exit == 1) {
+                char *tmp = (char *)&buff[ind];
+                if(buff[ind] == LF_ASCII_CODE) {
+                    end_cmd = true;
+                    buff[ind] = '\0';
+                }
+                else if(buff[ind] == 127 && ind == 0) {
+                    buff[ind] = '\0';
+                }
+                else if(buff[ind] == 127) {
+                    uart_write_bytes(UART_NUM_2, "\033[D \033[D\033[D", strlen("\033[D \033[D"));
+                    buff[ind] = '\0';
+                    buff[ind - 1] = '\0';
+                    ind--;
+                }
+                else {
+                    uart_write_bytes(UART_NUM_2, (const char*)tmp, 1);
+                    ind++;
+                }
+                vTaskDelay(5 / portTICK_PERIOD_MS);
+            }
+        }
+        command_line_status = true;
+        xQueueSendToBack(queue, &buff, 0);
+        vTaskDelay(5 / portTICK_PERIOD_MS);
+    }
+}
 
 
+/*
+ * @Function : 
+ *             get_users_time
+ *
+ * @Parameters : 
+ *               cmd        - users input from console
+ *
+ * @Description : 
+ *                change time variables according to input from console
+*/
+
+void get_users_time(char *cmd) {
+    char time[3];
+    int ind = 9;
+    int start_ind = 0;
+
+    bzero(&time, 3);
+    for(; cmd[ind] > 47 && cmd[ind] < 58; ind++) {
+        time[ind - 9] = cmd[ind];
+    }
+    printf("time = %s\n", time);
+    HOURS = atoi(time);
+    if(strlen(cmd) > ind) {
+        bzero(&time, 3);
+        start_ind = ind + 1;
+        for(ind += 1; cmd[ind] > 47 && cmd[ind] < 58; ind++) {
+            time[ind - start_ind] = cmd[ind];
+        }
+        printf("%s\n", time);
+        MINUTES = atoi(time);
+    }
+    if(strlen(cmd) > ind) {
+        bzero(&time, 3);
+        start_ind = ind + 1;
+        for(ind += 1; cmd[ind] > 47 && cmd[ind] < 58; ind++) {
+            time[ind - start_ind] = cmd[ind];
+        }
+        printf("%s\n", time);
+        seconds = atoi(time);
+    }
+    printf("%d %d %d\n", HOURS, MINUTES, seconds);
+}
 
 
+/*
+ * @Function : 
+ *             handle_cmd
+ *
+ * @Parameters : 
+ *               pvParameters        - NULL (needs to be a vTask)
+ *
+ * @Description : 
+ *                Manage witch function to call according to
+ *                console input.
+*/
+
+void handle_cmd(void *pvParameters) {
+    while(true) {
+        char cmd[CMD_MAX_LEN];
+        bzero(&cmd, CMD_MAX_LEN);
+        xQueueReceive(queue, &cmd, CMD_MAX_LEN);
+
+        if(strstr(cmd, "set time") == cmd)  {
+            get_users_time(cmd);
+            command_line_arrow();
+        }
+        else if(command_line_status == true) {
+            command_line_arrow();
+        }
+        command_line_status = false;
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+}
 
 
+/*
+ * @Function : 
+ *             uart_init
+ *
+ * @Description : 
+ *                Configure UART interface. UART used for console input
+*/
 
+void uart_init() {
+    const int uart_buffer_size = (1024 * 2);
 
+    uart_config_t uart_cfg = {
+        .baud_rate = 9600,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+    };
 
+    uart_param_config(UART_NUM_2, &uart_cfg);
+    uart_set_pin(UART_NUM_2, RXPIN, TXPIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    uart_driver_install(UART_NUM_2, uart_buffer_size, 0, 0, NULL, 0);
+}
 
+void app_main() {
+    queue = xQueueCreate(1, CMD_MAX_LEN);
+    error = xQueueCreate(1, ERR_MAX_LEN);
 
-
-
-
-
-
-
-
-
-
-
-
+    uart_init();
+    gpio_set_direction(GPIO_NUM_32, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_32, 1);
+    init_i2c();
+    display.addr = SH1106_ADDR;
+    display.port = SH1106_PORT;
+    init_sh1106();
+    
+    xTaskCreate(time_output, "time_output", 12040u, NULL, 3, &xTaskTimeOutput);
+    xTaskCreate(input_getter, "input_getter", 4048u, NULL, 1, NULL);
+    xTaskCreate(handle_cmd, "handle_cmd", 4048u, NULL, 1, NULL);
+}
