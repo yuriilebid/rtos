@@ -16,178 +16,76 @@
 #include <math.h>
 #include "driver/dac.h"
 #include "driver/spi_master.h"
-#define GPIO_POWER 2
-#define GPIO_DATA 4
+
+#define DHT11_POWER 2
+#define DHT11_DATA  4
+
+#define GPIO_LED1 26
+#define GPIO_LED2 27
+#define GPIO_LED3 33
+
+#define TXPIN 16
+#define RXPIN 17
+
+#define LF_ASCII_CODE 13        // Enter button
+
+#define CMD_MAX_LEN 30
+#define ERR_MAX_LEN 40
+#define HISTORY_SIZE 60
+#define PULSE_MAX_LEN 30
+
+#define DHT11_POWER 2
+#define DHT11_DATA  4
 
 #define GPIO_SDA GPIO_NUM_21
 #define GPIO_SCL GPIO_NUM_22
-#define SH1106_ADDR 0x3C            // Deafault sh1106  address
+#define SH1106_ADDR 0x3C        // Deafault sh1106  address
 #define SH1106_PORT I2C_NUM_0
 
-#define LED_ONE 26
-#define LED_TWO 27
-#define LED_THREE 33
+#define TIMER_DIVIDER         16  //  Hardware timer clock divider
+#define TIMER_SCALE           (TIMER_BASE_CLK / TIMER_DIVIDER)  // convert counter value to seconds
+#define TIMER_INTERVAL0_SEC   (3.4179) // sample test interval for the first timer
+#define TIMER_INTERVAL1_SEC   (5.78)   // sample test interval for the second timer
+#define TEST_WITHOUT_RELOAD   0        // testing will be done without auto reload
+#define TEST_WITH_RELOAD      1        // testing will be done with auto reload
 
-#define UPDATE_DELAY (200u / portTICK_PERIOD_MS)
+uint8_t HOURS = 0;
+uint8_t MINUTES = 0;
+uint8_t seconds = 0;
 
-#define BW_RATE 0x2Du          // Data rate and power mode control
-#define POWER_CTL 0x2Du        // Power-saving features control
-#define LOW_POWER 0x08u        // 4-th bit gow low poerw
-
-#define PIN_MISO 12
-#define PIN_MOSI 13
-#define PIN_CLK 14
-#define PIN_CS 15
-
-#define BUTTON_ONE 39
-#define BUTTON_TWO 18
-
-#define EN_ACCEL 23
-
-/** @brief ADXL345 register read flag. */
-#define ADXL345_REG_READ_FLAG 0x80u
-/** @brief ADXL345 register multibyte flag. */
-#define ADXL345_REG_MB_FLAG 0x40u
-/** @brief ADXL345 register: DATAX0. */
-#define ADXL345_REG_DATAX0 0x32u
+uint8_t TEMPERATURELVL = 0;
+uint8_t HUMIDITYLVL = 0;
 
 typedef struct {
     uint8_t addr;
     i2c_port_t port;
-    uint8_t grid[16][128];          // Pixesl grid (16 * byte(8 bit)) * 128
+    uint8_t grid[8][128];          // Pixesl grid (16 * byte(8 bit)) * 128
     uint16_t changes;
 } sh1106_t;
 
-static int x = 0;
-static int y = 0;
-static int z = 0;
-static int led_focus = LED_TWO;
+#define TIMER_DIVIDER         16  //  Hardware timer clock divider
+#define TIMER_SCALE           (TIMER_BASE_CLK / TIMER_DIVIDER)  // convert counter value to seconds
 
-static spi_device_handle_t spi;
+QueueHandle_t queue = NULL;
+QueueHandle_t error = NULL;
+QueueHandle_t pulse = NULL;
+
+int time_secs_general = 0;
+int time_secs_current = 0;
+int timer_index = TIMER_1;
+
+bool command_line_status = false;
 
 sh1106_t display;
 
-int module(int num) {
-    if(num < 0) {
-        return -1 * num;
-    }
-    return num;
-}
+uint32_t mins = 0x00000000;
+uint32_t hours = 0x00000000;
+uint32_t ulNotifiedValueSecs;
 
-void trans_packet(uint8_t address, uint8_t data) {
-	spi_transaction_t packet = {
-		.flags     = SPI_TRANS_USE_RXDATA,
-		.cmd       = address,
-		.tx_buffer = &data,
-		.length    = 8
-	};
-	spi_device_polling_transmit(spi, &packet);
-}
+bool write = false;
 
-void adx1345_read(int16_t *accs) {
-    uint8_t tx_buffer[3u * sizeof(uint16_t)];
-    spi_transaction_t packet = {
-        .tx_buffer = tx_buffer,
-    	.cmd       = ADXL345_REG_READ_FLAG |
-                   ADXL345_REG_MB_FLAG |
-                   ADXL345_REG_DATAX0,
-        .length    = sizeof(tx_buffer) * 8,
-    	.rx_buffer = accs
-    };
-    spi_device_polling_transmit(spi, &packet);
-}
-
-void spi_init() {
-    spi_bus_config_t bus_config = {
-    	.miso_io_num   = PIN_MISO,
-    	.mosi_io_num   = PIN_MOSI,
-    	.sclk_io_num   = PIN_CLK,
-    	.quadwp_io_num = -1,
-    	.quadhd_io_num = -1
-    };
-    spi_device_interface_config_t device_config = {
-    	.clock_speed_hz = 1000000,
-    	.mode           = 3,
-    	.spics_io_num   = PIN_CS,
-    	.command_bits   = 8,
-    	.queue_size     = 1
-    };
-    spi_bus_initialize(VSPI_HOST, &bus_config, 0);
-    spi_bus_add_device(VSPI_HOST, &device_config, &spi);
-}
-
-void pulse_led(void *pvParameters) {
-	ledc_timer_config_t timer_config = {
-        .speed_mode = LEDC_HIGH_SPEED_MODE,
-        .freq_hz = 100,
-        .duty_resolution = LEDC_TIMER_8_BIT,
-        .timer_num = LEDC_TIMER_1
-    };
-    ledc_timer_config(&timer_config);
-
-    while(true) {
-    	ledc_channel_config_t channel_config = {
-            .gpio_num = led_focus,
-            .speed_mode = LEDC_HIGH_SPEED_MODE,
-            .channel = LEDC_CHANNEL_1,
-            .intr_type = LEDC_INTR_FADE_END,
-            .timer_sel = LEDC_TIMER_1,
-            .duty = 0
-        };
-        ledc_channel_config(&channel_config);
-        ledc_fade_func_install(0);
-        ledc_set_fade_with_time(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1, 200, 500);
-        ledc_fade_start(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1, LEDC_FADE_WAIT_DONE);
-        ledc_set_fade_with_time(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1, 0, 500);
-        ledc_fade_start(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1, LEDC_FADE_WAIT_DONE);
-        vTaskDelay(50);
-    }
-}
-
-void acceleration(void *pvParameters) {
-	int16_t accs[3];
-
-    gpio_set_direction(EN_ACCEL, GPIO_MODE_OUTPUT);
-    gpio_set_direction(GPIO_NUM_5, GPIO_MODE_INPUT);
-    trans_packet(BW_RATE, LOW_POWER);
-	vTaskDelay(UPDATE_DELAY);
-	adx1345_read(accs);
-	while(true) {
-		adx1345_read(accs);
-		x = module(accs[0]);
-        y = module(accs[1]);
-        z = module(accs[2]);
-        vTaskDelay(10);
-	}
-}
-
-void leds_control(void *pvParameters) {
-	int led_ind = 0;
-	int start_y = module(y);
-	int leds_arr[3] = {LED_TWO, LED_ONE, LED_THREE};
-    int past_led = 0;
-
-	while(true) {
-	    printf("%d  %d  %d\n", x, y, z);
-        if(start_y - y > 70) {
-        	led_ind++;
-        	if(led_ind == 3) {
-        		led_ind = 0;
-        	}
-        	led_focus = leds_arr[led_ind];
-        	vTaskDelay(100);
-        }
-        else if(y - start_y > 70) {
-        	led_ind--;
-        	if(led_ind == -1) {
-        		led_ind = 2;
-        	}
-        	led_focus = leds_arr[led_ind];
-        	vTaskDelay(100);
-        }
-	    vTaskDelay(10);
-    }
-}
+TaskHandle_t xTaskTimeOutput;
+TaskHandle_t xTaskOledOutput;
 
 /*
  * @Function : 
@@ -239,7 +137,7 @@ void init_sh1106() {
     i2c_master_write_byte(cmd, 0x40, true);
     i2c_master_write_byte(cmd, 0xA1, true); // segment remap
     i2c_master_write_byte(cmd, 0xA6, true);
-    i2c_master_write_byte(cmd, 0x81, true); // contrast
+    i2c_master_write_byte(cmd, 0x01, true); // contrast
     i2c_master_write_byte(cmd, 0xFF, true);
     i2c_master_write_byte(cmd, 0xAF, true); // on
     i2c_master_stop(cmd);
@@ -393,23 +291,6 @@ void print_char(char ch, uint8_t x_str, int size, int page) {
     }
 }
 
-/*
- * @Function : 
- *            clear_display
- *
- * @Description : 
- *               clear array of display(dht1106)
-*/
-
-void clear_display() {    
-    for(uint8_t y = 0; y < 64; y++) {
-        for(uint8_t x = 0; x < 128; x++) {
-            set_pixel_sh1106(x, y, 0);
-        }
-    }
-    refresh_sh1106();
-}
-
 
 /*
  * @Function : 
@@ -435,71 +316,577 @@ void print_string(char *str, int size, int page) {
     }
 }
 
-void alarm_window() {
 
+/*
+ * @Function : 
+ *            clock_isr
+ *
+ * @Parameters : 
+ *              para        - NULL (needs to be an interrupt function)
+ *
+ * @Description : 
+ *               Notifies about timers counts to 1 seconds to main task. Set timers to default value
+ *               and starts it again
+*/
+
+static void IRAM_ATTR clock_isr(void *para) {
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    uint32_t timer_intr = timer_group_get_intr_status_in_isr(TIMER_GROUP_0);
+    uint64_t timer_counter_value = timer_group_get_counter_value_in_isr(TIMER_GROUP_0, timer_index);
+
+    xTaskNotifyFromISR(xTaskTimeOutput, 1, eNoAction, NULL);
+
+    timer_group_clr_intr_status_in_isr(TIMER_GROUP_0, timer_index);
+    timer_group_enable_alarm_in_isr(TIMER_GROUP_0, timer_index);
+    portYIELD_FROM_ISR();
 }
 
-void main_window() {
 
-}
+/*
+ * @Function : 
+ *            clear_display
+ *
+ * @Description : 
+ *               clear array of display(dht1106)
+*/
 
-void led_window(void *pvParameters) {
-    while(true) {
-    	char buff[20];
-
-        bzero(&buff, 20);
-        clear_display();
-        sprintf(&buff, " 1  2  3");
-        print_string(buff , 2, 3);
-        refresh_sh1106();
-    	vTaskDelay(20);
+void clear_display() {    
+    for(uint8_t y = 0; y < 64; y++) {
+        for(uint8_t x = 0; x < 128; x++) {
+            set_pixel_sh1106(x, y, 0);
+        }
     }
 }
 
-void button_one(void *pvParameters) {
-    int press_count = 0;
-    int led_status = 0;
 
-    gpio_set_direction(BUTTON_ONE, GPIO_MODE_INPUT);
-    // gpio_set_direction(LED_ONE, GPIO_MODE_OUTPUT);
-    while(true) {
-        if(gpio_get_level(BUTTON_ONE) == 1) {
-            if(press_count < 4 && led_status == 0) {
-                press_count++;
-            }
-            else if(press_count > 0 && led_status == 1) {
-                press_count--;
-            }
-        }
-        else {
-            if(press_count >= 40 && led_status == 0) {
-                led_status = 1;
-            }
-            else if(press_count <= 0 && led_status == 1) {
-                led_status = 0;
-            }
-            if(led_status == 1) {
-            	leds_control(NULL);
-            }
-        }
-        vTaskDelay(15);
+/*
+ * @Function : 
+ *            set_time
+ *
+ * @Description : 
+ *               Change global variables <seconds> <minutes> <hours>
+ *               according to change of seconds
+*/
+
+void set_time() {
+    if(seconds >= 60) {
+        MINUTES++;
+        seconds = 0;
+    }
+    if(MINUTES >= 60) {
+        HOURS++;
+        MINUTES = 0;
+    }
+    if(HOURS >= 24) {
+        HOURS = 0;
     }
 }
 
+
+/*
+ * @Function : 
+ *             wait_status
+ *
+ * @Parameters :
+ *               status        - true (high voltage)
+ *                             - false (low voltage)
+ *
+ * @Description : 
+ *                Waits for voltage level to change to <status>
+ *
+ * @Return :
+ *           count        - amount of microseconds before changing
+ *                          voltage
+*/
+
+int wait_status(_Bool status) {
+    int count = 0;
+
+    while (gpio_get_level(DHT11_DATA) == status) {
+        count++;
+        ets_delay_us(1);
+    }
+    return count;
+}
+
+
+/*
+ * @Function : 
+ *             preparing_for_receiving_data
+ *
+ * @Description : 
+ *                Waits 1.5 seconds to measure first temp 
+ *                and humidity values
+*/
+
+void preparing_for_receiving_data() {
+    gpio_set_direction(DHT11_DATA,  GPIO_MODE_OUTPUT);
+    gpio_set_level(DHT11_DATA, 1);
+    ets_delay_us(1500 * 1000);
+    gpio_set_level(DHT11_DATA, 0);
+    ets_delay_us(18000);
+    gpio_set_level(DHT11_DATA, 1);
+    ets_delay_us(30);
+    gpio_set_direction(DHT11_DATA, GPIO_MODE_INPUT);
+
+    wait_status(0);
+    wait_status(1);
+}
+
+
+/*
+ * @Function : 
+ *             weather
+ *
+ * @Description : 
+ *                Gets temperature and humidity measurements
+ *                from dht11
+*/
+
+void weather(void *pvParameters) {
+    int res = 0;
+    uint8_t data[5];
+
+    while(true) {
+        bzero(&data, sizeof(data));
+        preparing_for_receiving_data();
+        
+        for (int i = 1, j = 0; i < 41; i++) {
+            wait_status(0);
+            res = wait_status(1);
+            if (res > 28) {
+                data[j] <<= 1;
+                data[j] += 1;
+            }
+            else {
+                data[j] <<= 1;
+            }
+            if (i % 8 == 0) {
+                j++;
+            }
+        }
+        if (data[0] + data[1] + data[2] + data[3] != data[4]) {
+            printf("Invalid sum\n");
+        }
+        TEMPERATURELVL = data[2];
+        HUMIDITYLVL = data[0];
+        vTaskDelay(10);
+    }
+}
+
+
+/*
+ * @Function : 
+ *             command_line_arrow
+ *
+ * @Description : 
+ *                Set color of command line arrow ">"
+ *                - green if no errors
+ *                - red if errors ocurred
+ *                and writes it to UART console.
+*/
+
+void command_line_arrow() {
+    uint8_t err[CMD_MAX_LEN];
+    char* text_pick = "> ";
+    char cmd[CMD_MAX_LEN];
+    bzero(&cmd, CMD_MAX_LEN);
+    bzero(&err, CMD_MAX_LEN);
+
+    if(xQueueReceive(error, &err, 5) != errQUEUE_EMPTY) {
+        text_pick = "\e[0;31m> \e[0;39m";
+    }
+    else {
+        text_pick = "\e[0;32m> \e[0;39m";
+    }
+    uart_write_bytes(UART_NUM_2, "\n\r", 2);
+    uart_write_bytes(UART_NUM_2, text_pick, strlen(text_pick));
+}
+
+
+/*
+ * @Function : 
+ *            draw_image
+ *
+ * @Description : 
+ *               Sets new time string on display(dht1106)
+ *               Adds '0' where amount of digits are less than max number 
+ *               of digits (6:5:30 -> 06:05:30)
+*/
+
+void draw_image() {
+    set_time();
+    clear_display();
+    char time[20];
+    char humidity_temperature[20];
+
+    bzero(&time, 20);
+    if(HOURS < 10 && MINUTES < 10 && seconds < 10) {
+        sprintf(&time, " %c%d:%c%d:%c%d", '0', HOURS, '0', MINUTES, '0', seconds);
+    }
+    else if(HOURS < 10 && MINUTES < 10) {
+        sprintf(&time, " %c%d:%c%d:%d", '0', HOURS, '0', MINUTES, seconds);
+    }
+    else if(HOURS < 10) {
+        sprintf(&time, " %c%d:%d:%d", '0', HOURS, MINUTES, seconds);   
+    }
+    else if(MINUTES < 10 && seconds < 10) {
+        sprintf(&time, " %d:%c%d:%c%d", HOURS, '0', MINUTES, '0', seconds);
+    }
+    else if(MINUTES < 10) {
+        sprintf(&time, " %d:%c%d:%d", HOURS, '0', MINUTES, seconds);
+    }
+    else if(seconds < 10) {
+        sprintf(&time, " %d:%d:%c%d", HOURS, MINUTES, '0', seconds);
+    }
+    else {
+        sprintf(&time, " %d:%d:%d", HOURS, MINUTES, seconds);
+    }
+    print_string(time , 2, 5);
+
+    bzero(&humidity_temperature, 10);
+    sprintf(&humidity_temperature, "%d%%    %dC", HUMIDITYLVL, TEMPERATURELVL);
+    print_string(humidity_temperature , 2, 2);
+    print_string("humidity  temperature" , 1, 1);
+
+    refresh_sh1106();
+}
+
+
+/*
+ * @Function : 
+ *            timer_initialisation
+ *
+ * @Description : 
+ *               Configures time to count up for 1 seconds, and use function <clock_isr>
+ *               as an interrupt to notify changes of timer
+*/
+
+void timer_initialisation() {
+    timer_config_t clock_cfg = {
+        .divider = TIMER_DIVIDER,
+        .counter_dir = TIMER_COUNT_UP,
+        .counter_en = TIMER_PAUSE,
+        .alarm_en = TIMER_ALARM_EN,
+        .auto_reload = TEST_WITH_RELOAD,
+    };
+    timer_init(TIMER_GROUP_0, timer_index, &clock_cfg);
+    timer_set_counter_value(TIMER_GROUP_0, timer_index, 0);
+    timer_set_alarm_value(TIMER_GROUP_0, timer_index, (1) * TIMER_SCALE);
+    timer_enable_intr(TIMER_GROUP_0, timer_index);
+    timer_isr_register(TIMER_GROUP_0, timer_index, clock_isr, NULL, ESP_INTR_FLAG_IRAM, NULL);
+    timer_start(TIMER_GROUP_0, timer_index);
+}
+
+
+/*
+ * @Function : 
+ *            wait_status
+ *
+ * @Parameters : 
+ *              param        - NULL (needs to be a vTask)
+ *
+ * @Description : 
+ *               Call display updates each interrupt(1 second)
+*/
+
+void time_output(void *param) {
+    timer_initialisation();
+
+    while(true) {
+        xTaskNotifyWait(0x00000000, 0x00000000, NULL, portMAX_DELAY);
+        seconds++;
+        draw_image();
+    }
+}
+
+
+/*
+ * @Function : 
+ *             input_getter
+ *
+ * @Parameters : 
+ *               pvParameters        - NULL (needs to be a vTask)
+ *
+ * @Description : Gets input from UART console with managin function buttons.
+ *                Sends input to queue "queue".
+*/
+
+void input_getter(void *pvParameters) {
+    uint8_t buff[CMD_MAX_LEN];
+
+    while(true) {
+        char *request = NULL;
+        bool end_cmd = false;
+
+        bzero(buff, CMD_MAX_LEN);
+        for(int ind = 0; ind < (CMD_MAX_LEN - 1) && !end_cmd;) {
+            uart_flush_input(UART_NUM_2);
+            int exit = uart_read_bytes(UART_NUM_2, &buff[ind], 1, (200 / portTICK_PERIOD_MS));
+            if(exit == 1) {
+                char *tmp = (char *)&buff[ind];
+                if(buff[ind] == LF_ASCII_CODE) {
+                    end_cmd = true;
+                    buff[ind] = '\0';
+                }
+                else if(buff[ind] == 127 && ind == 0) {
+                    buff[ind] = '\0';
+                }
+                else if(buff[ind] == 127) {
+                    uart_write_bytes(UART_NUM_2, "\033[D \033[D\033[D", strlen("\033[D \033[D"));
+                    buff[ind] = '\0';
+                    buff[ind - 1] = '\0';
+                    ind--;
+                }
+                else {
+                    uart_write_bytes(UART_NUM_2, (const char*)tmp, 1);
+                    ind++;
+                }
+                vTaskDelay(5 / portTICK_PERIOD_MS);
+            }
+        }
+        command_line_status = true;
+        xQueueSendToBack(queue, &buff, 0);
+        vTaskDelay(5 / portTICK_PERIOD_MS);
+    }
+}
+
+
+/*
+ * @Function : 
+ *             get_users_time
+ *
+ * @Parameters : 
+ *               cmd        - users input from console
+ *
+ * @Description : 
+ *                change time variables according to input from console
+*/
+
+void get_users_time(char *cmd) {
+    char time[3];
+    int ind = 9;
+    int start_ind = 0;
+
+    bzero(&time, 3);
+    for(; cmd[ind] > 47 && cmd[ind] < 58; ind++) {
+        time[ind - 9] = cmd[ind];
+    }
+    printf("time = %s\n", time);
+    HOURS = atoi(time);
+    if(strlen(cmd) > ind) {
+        bzero(&time, 3);
+        start_ind = ind + 1;
+        for(ind += 1; cmd[ind] > 47 && cmd[ind] < 58; ind++) {
+            time[ind - start_ind] = cmd[ind];
+        }
+        printf("%s\n", time);
+        MINUTES = atoi(time);
+    }
+    if(strlen(cmd) > ind) {
+        bzero(&time, 3);
+        start_ind = ind + 1;
+        for(ind += 1; cmd[ind] > 47 && cmd[ind] < 58; ind++) {
+            time[ind - start_ind] = cmd[ind];
+        }
+        printf("%s\n", time);
+        seconds = atoi(time);
+    }
+    printf("%d %d %d\n", HOURS, MINUTES, seconds);
+}
+
+
+/*
+ * @Function : 
+ *            pwm_pulsing
+ *
+ * @Parameters : 
+ *              pvParameters        - NULL (needs to be a Task)
+ *
+ * @Description : 
+ *               Sets led's gpio pulsing via PWM configurations.
+ *               Controls from <pulse> queue
+*/
+
+void pwm_pulsing(void *pvParameters) {
+    bool status = false;
+
+    ledc_timer_config_t timer_config;
+    timer_config.speed_mode = LEDC_HIGH_SPEED_MODE;
+    timer_config.freq_hz = 100;
+    timer_config.duty_resolution = LEDC_TIMER_8_BIT;
+    timer_config.timer_num = LEDC_TIMER_1;
+
+    ledc_timer_config(&timer_config);
+
+    ledc_channel_config_t channel_config;
+    channel_config.gpio_num = GPIO_LED1;
+    channel_config.speed_mode = LEDC_HIGH_SPEED_MODE;
+    channel_config.channel = LEDC_CHANNEL_1;
+    channel_config.intr_type = LEDC_INTR_FADE_END;
+    channel_config.timer_sel = LEDC_TIMER_1;
+    channel_config.duty = 0;
+
+    ledc_channel_config(&channel_config);
+    ledc_fade_func_install(0);
+
+    while(true) {
+        char cmd[PULSE_MAX_LEN];
+
+        bzero(&cmd, PULSE_MAX_LEN);
+        if(xQueueReceive(pulse, &cmd, PULSE_MAX_LEN) > 0) {
+            if(atoi(&cmd[10]) > 3 || atoi(&cmd[10]) < 0) {
+                // xQueueSendToBack(error, "\e[1m\e[0;31mNo such led.\e[0;39m Available leds: 1, 2, 3", 0);
+                false;
+            }
+            else if(atoi(&cmd[12]) >= 2 || atoi(&cmd[12]) <= 0) {
+                // xQueueSendToBack(error, "\e[1m\e[0;31mInvalid Hz number.\e[0;39m Available Hz 0 < f < 2", 0);
+                status = false;
+            }
+            else {
+                switch(atoi(&cmd[10])) {
+                    case 1:
+                        channel_config.gpio_num = GPIO_LED1;
+                        break;
+                    case 2:
+                        channel_config.gpio_num = GPIO_LED2;
+                        break;
+                    case 3:
+                        channel_config.gpio_num = GPIO_LED3;
+                        break;
+                }
+                timer_config.freq_hz = atoi(&cmd[12]) * 100;
+                ledc_timer_config(&timer_config);
+                ledc_channel_config(&channel_config);
+                ledc_fade_func_install(0);
+                status = true;
+            }
+        }
+        if(status) {
+            ledc_set_fade_with_time(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1, 200, 1000);
+            ledc_fade_start(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1, LEDC_FADE_WAIT_DONE);
+            ledc_set_fade_with_time(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1, 0, 1000);
+            ledc_fade_start(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1, LEDC_FADE_WAIT_DONE);
+        }
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+    }
+}
+
+
+/*
+ * @Function : 
+ *             handle_cmd
+ *
+ * @Parameters : 
+ *               pvParameters        - NULL (needs to be a vTask)
+ *
+ * @Description : 
+ *                Manage witch function to call according to
+ *                console input.
+*/
+
+void handle_cmd(void *pvParameters) {
+    while(true) {
+        char cmd[CMD_MAX_LEN];
+        bzero(&cmd, CMD_MAX_LEN);
+        xQueueReceive(queue, &cmd, CMD_MAX_LEN);
+
+        if(strstr(cmd, "set time") == cmd)  {
+            get_users_time(cmd);
+            command_line_arrow();
+        }
+        else if(strstr(cmd, "led on") == cmd) {
+            if(strstr(cmd, " 1") != NULL) {
+                gpio_set_direction(GPIO_LED1, GPIO_MODE_OUTPUT);
+                gpio_set_level(GPIO_LED1, 1);
+            }
+            else if(strstr(cmd, " 2") != NULL) {
+                gpio_set_direction(GPIO_LED2, GPIO_MODE_OUTPUT);
+                gpio_set_level(GPIO_LED2, 1);
+            }
+            else if(strstr(cmd, " 3") != NULL) {
+                gpio_set_direction(GPIO_LED3, GPIO_MODE_OUTPUT);
+                gpio_set_level(GPIO_LED3, 1);
+            }
+        }
+        else if(strstr(cmd, "led off") == cmd) {
+            if(strstr(cmd, " 1") != NULL) {
+                gpio_set_direction(GPIO_LED1, GPIO_MODE_DISABLE);
+            }
+            else if(strstr(cmd, " 2") != NULL) {
+                gpio_set_direction(GPIO_LED2, GPIO_MODE_DISABLE);
+            }
+            else if(strstr(cmd, " 3") != NULL) {
+                gpio_set_direction(GPIO_LED3, GPIO_MODE_DISABLE);
+            }
+        }
+        else if(strstr(cmd, "get temperature") == cmd) {
+            char buff[30];
+
+            bzero(buff, 30);
+            sprintf(&buff, "\n\rTemperature: %d", TEMPERATURELVL);
+            uart_write_bytes(UART_NUM_2, buff, strlen(buff));
+            command_line_arrow();
+        }
+        else if(strstr(cmd, "get humidity") == cmd) {
+            char buff[30];
+
+            bzero(buff, 30);
+            sprintf(&buff, "\n\rHumidity: %d", HUMIDITYLVL);
+            uart_write_bytes(UART_NUM_2, buff, strlen(buff));
+            command_line_arrow();
+        }
+        else if(command_line_status == true) {
+            command_line_arrow();
+        }
+        command_line_status = false;
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+}
+
+
+/*
+ * @Function : 
+ *             uart_init
+ *
+ * @Description : 
+ *                Configure UART interface. UART used for console input
+*/
+
+void uart_init() {
+    const int uart_buffer_size = (1024 * 2);
+
+    uart_config_t uart_cfg = {
+        .baud_rate = 9600,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+    };
+
+    uart_param_config(UART_NUM_2, &uart_cfg);
+    uart_set_pin(UART_NUM_2, RXPIN, TXPIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    uart_driver_install(UART_NUM_2, uart_buffer_size, 0, 0, NULL, 0);
+}
 
 void app_main() {
+    queue = xQueueCreate(1, CMD_MAX_LEN);
+    error = xQueueCreate(1, ERR_MAX_LEN);
+    pulse = xQueueCreate(1, PULSE_MAX_LEN);
+
+    gpio_set_direction(DHT11_POWER, GPIO_MODE_OUTPUT);
+    gpio_set_level(DHT11_POWER, 1);
+    uart_init();
     gpio_set_direction(GPIO_NUM_32, GPIO_MODE_OUTPUT);
     gpio_set_level(GPIO_NUM_32, 1);
     init_i2c();
     display.addr = SH1106_ADDR;
     display.port = SH1106_PORT;
     init_sh1106();
-
-    print_string("Hello", 2, 2);
-    refresh_sh1106();
-    spi_init();
-    xTaskCreate(acceleration, "acceleration", 2048u, NULL, 10, NULL);
-    // xTaskCreate(leds_control, "leds_control", 2048u, NULL, 10, 0);
-    // xTaskCreate(button_one, "button_one", 2048u, NULL, 10, NULL);
-    xTaskCreate(led_window, "led_window", 12040u, NULL, 2, NULL);
+    
+    xTaskCreate(weather, "weather", 2048u, NULL, 1, 0);
+    xTaskCreate(time_output, "time_output", 12040u, NULL, 3, &xTaskTimeOutput);
+    xTaskCreate(input_getter, "input_getter", 4048u, NULL, 1, NULL);
+    xTaskCreate(handle_cmd, "handle_cmd", 4048u, NULL, 1, NULL);
+    xTaskCreate(pwm_pulsing, "pwm_pulsing", 4048, NULL, 3, NULL);
 }
