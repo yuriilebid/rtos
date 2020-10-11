@@ -18,15 +18,28 @@
 #define TXPIN 16
 #define RXPIN 17
 
-#define LF_ASCII_CODE 13    // Enter button
+#define LF_ASCII_CODE 13
 
-#define CMD_MAX_LEN 20      // Max cmd len "led pulse"
+#define CMD_MAX_LEN 20
 #define ERR_MAX_LEN 100
 #define PULSE_MAX_LEN 30
 
 QueueHandle_t queue = NULL;
 QueueHandle_t error = NULL;
 QueueHandle_t pulse = NULL;
+
+
+/*
+ * @Function : 
+ *            pwm_pulsing
+ *
+ * @Parameters : 
+ *              pvParameters        - NULL (needs to be a Task)
+ *
+ * @Description : 
+ *               Sets led's gpio pulsing via PWM configurations.
+ *               Controls from <pulse> queue
+*/
 
 void pwm_pulsing(void *pvParameters) {
     bool status = false;
@@ -92,6 +105,19 @@ void pwm_pulsing(void *pvParameters) {
     }
 }
 
+
+/*
+ * @Function : 
+ *             handle_cmd
+ *
+ * @Parameters : 
+ *               pvParameters        - NULL (needs to be a vTask)
+ *
+ * @Description : 
+ *                Manage witch function to call according to
+ *                console input.
+*/
+
 void handle_cmd(void *pvParameters) {
     while(true) {
         char cmd[CMD_MAX_LEN];
@@ -138,24 +164,17 @@ void handle_cmd(void *pvParameters) {
     printf("\n\n");
 }
 
-void clear_str(int len) {
-    printf("\r");
-    for(int i = 0; i < len + 1; i++) {
-        printf(" ");
-    }
-    printf("\r");
-}
 
-void print_input(char *input) {
-    int len = strlen(input);
-
-    printf("\r");
-    for(int i = 0; i < len + 1; i++) {
-        printf(" ");
-    }
-    printf("\r");
-    printf("%s", input);
-}
+/*
+ * @Function : 
+ *             input_getter
+ *
+ * @Parameters : 
+ *               pvParameters        - NULL (needs to be a vTask)
+ *
+ * @Description : Gets input from UART console with managin function buttons.
+ *                Sends input to queue "queue".
+*/
 
 void input_getter(void *pvParameters) {
     uint8_t buff[CMD_MAX_LEN];
@@ -207,6 +226,7 @@ void input_getter(void *pvParameters) {
         uart_write_bytes(UART_NUM_2, "\n\r", 2);
     }
 }
+
 
 void app_main() {
     queue = xQueueCreate(1, CMD_MAX_LEN);

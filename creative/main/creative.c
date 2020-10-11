@@ -93,6 +93,7 @@ TaskHandle_t xTaskTimeOutput;
 TaskHandle_t xAlarmTimeOutput;
 TaskHandle_t xTaskOledOutput;
 
+
 /*
  * @Function : 
  *            init_i2c
@@ -908,6 +909,7 @@ int count_secs_to_alarm(char* cmd) {
     return time_to_alarm_secs - 1;
 }
 
+
 /*
  * @Function : 
  *             handle_cmd
@@ -1086,5 +1088,4 @@ void app_main() {
     xTaskCreate(pwm_pulsing, "pwm_pulsing", 4048u, NULL, 3, NULL);
     xTaskCreate(sound_task, "sound_task", 12040u, NULL, 2, NULL);
     xTaskCreate(alarm_ding, "alarm_ding", 4048u, NULL, 3, &xAlarmTimeOutput);
-
 }

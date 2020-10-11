@@ -26,6 +26,15 @@ typedef struct {
     uint16_t changes;
 } sh1106_t;
 
+
+/*
+ * @Function : 
+ *            init_i2c
+ *
+ * @Description : 
+ *               Configurates i2c interface. I2C used for display(sh1106)
+*/
+
 void init_i2c() {
     i2c_config_t i2c_config = {
         .mode = I2C_MODE_MASTER,
@@ -38,6 +47,15 @@ void init_i2c() {
     i2c_param_config(SH1106_PORT, &i2c_config);
     i2c_driver_install(SH1106_PORT, I2C_MODE_MASTER, 0, 0, 0);
 }
+
+
+/*
+ * @Function : 
+ *            init_sh1106
+ *
+ * @Description : 
+ *               Configurates display(sh1106) settings
+*/
 
 void init_sh1106(sh1106_t *display) {
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
@@ -67,6 +85,20 @@ void init_sh1106(sh1106_t *display) {
     i2c_cmd_link_delete(cmd);
 }
 
+
+/*
+ * @Function : 
+ *            set_pixel_sh1106
+ *
+ * @Parameters : 
+ *              x                - position of horisontal line of display(dht1106)
+ *              y                - position of vertical line of display(dht1106)
+ *              pixel_status     - <true> to light on pixel, <false>  to light off
+ *
+ * @Description : 
+ *               Sets pixel status (on/off) in display array of pixels
+*/
+
 void set_pixel_sh1106(sh1106_t *display, uint8_t x, uint8_t y, bool pixel_status) {
     uint8_t page = y / 8;
 
@@ -78,6 +110,18 @@ void set_pixel_sh1106(sh1106_t *display, uint8_t x, uint8_t y, bool pixel_status
     }
     display->changes |= (1 << page);
 }
+
+
+/*
+ * @Function : 
+ *            print_page
+ *
+ * @Parameters : 
+ *              page        - Each 8 horizontal lines, of display(dht1106) (128 X 8 pixels)
+ *
+ * @Description : 
+ *               Updates one page of display (128 X 8 pixels) with array <display.grid>
+*/
 
 void print_page(sh1106_t *display, uint8_t page) {
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
@@ -92,6 +136,15 @@ void print_page(sh1106_t *display, uint8_t page) {
     i2c_cmd_link_delete(cmd);
 }
 
+
+/*
+ * @Function : 
+ *            refresh_sh1106
+ *
+ * @Description : 
+ *               updates all display with array <display.grid>
+*/
+
 void refresh_sh1106(sh1106_t *display) {
     for(uint8_t y_page = 0; y_page < 16; y_page++) {
         if (display->changes & (1 << y_page)) {
@@ -100,6 +153,18 @@ void refresh_sh1106(sh1106_t *display) {
     }
     display->changes = 0x0000;
 }
+
+
+/*
+ * @Function : 
+ *            set_contrast
+ *
+ * @Parameters :
+ *              display        - structure handles sh1106(display)
+ *
+ * @Description : 
+ *               Set brightness according to value of global variable <brightness_max>
+*/
 
 void set_contrast(sh1106_t *display) {
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
@@ -112,6 +177,18 @@ void set_contrast(sh1106_t *display) {
     i2c_master_cmd_begin(display->port, cmd, 10 / portTICK_PERIOD_MS);
     i2c_cmd_link_delete(cmd);
 }
+
+
+/*
+ * @Function : 
+ *            oled
+ *
+ * @Parameters :
+ *              pvParameters        - NULL (needs to be a task)
+ *
+ * @Description : 
+ *               Sets sh1106(display) and control of changing pictures frames (each 10 ticks)
+*/
 
 void oled(void *pvParameters) {
     sh1106_t display;
@@ -136,6 +213,19 @@ void oled(void *pvParameters) {
     }
 }
 
+
+/*
+ * @Function : 
+ *            get_light
+ *
+ * @Parameters :
+ *              pvParameters        - NULL (needs to be a task)
+ *
+ * @Description : 
+ *               Gets current brightness around device. Uses ADC (Analog)
+ *               to digital converter
+*/
+
 void get_light(void *pvParameters) {
     adc1_config_width(ADC_WIDTH_BIT_12);
     adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_0);
@@ -145,6 +235,7 @@ void get_light(void *pvParameters) {
     }
     vTaskDelete(NULL);
 }
+
 
 void app_main() {
     xTaskCreate(get_light, "get_light", 4048u, NULL, 1, 0);
