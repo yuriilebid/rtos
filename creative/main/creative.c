@@ -15,10 +15,13 @@
 #include "driver/i2c.h"
 #include <math.h>
 #include "driver/dac.h"
+#include "driver/i2s.h"
 #include "driver/spi_master.h"
 
 #define DHT11_POWER 2
 #define DHT11_DATA  4
+
+#define EN_AMP 23
 
 #define GPIO_LED1 26
 #define GPIO_LED2 27
@@ -73,6 +76,7 @@ QueueHandle_t pulse = NULL;
 int time_secs_general = 0;
 int time_secs_current = 0;
 int timer_index = TIMER_1;
+int timer_index_alarm = TIMER_0;
 
 bool command_line_status = false;
 
@@ -83,8 +87,10 @@ uint32_t hours = 0x00000000;
 uint32_t ulNotifiedValueSecs;
 
 bool write = false;
+bool sound_status = false;
 
 TaskHandle_t xTaskTimeOutput;
+TaskHandle_t xAlarmTimeOutput;
 TaskHandle_t xTaskOledOutput;
 
 /*
@@ -344,6 +350,30 @@ static void IRAM_ATTR clock_isr(void *para) {
 
 /*
  * @Function : 
+ *            clock_alarm
+ *
+ * @Parameters : 
+ *              para        - NULL (needs to be an interrupt function)
+ *
+ * @Description : 
+ *               Notifies about timers counts to 1 seconds to main task. Set timers to default value
+ *               and starts it again
+*/
+
+static void IRAM_ATTR clock_alarm(void *para) {
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    uint32_t timer_intr = timer_group_get_intr_status_in_isr(TIMER_GROUP_0);
+    uint64_t timer_counter_value = timer_group_get_counter_value_in_isr(TIMER_GROUP_0, timer_index_alarm);
+
+    xTaskNotifyFromISR(xAlarmTimeOutput, 1, eNoAction, NULL);
+
+    timer_group_clr_intr_status_in_isr(TIMER_GROUP_0, timer_index_alarm);
+    timer_group_enable_alarm_in_isr(TIMER_GROUP_0, timer_index_alarm);
+    portYIELD_FROM_ISR();
+}
+
+/*
+ * @Function : 
  *            clear_display
  *
  * @Description : 
@@ -581,7 +611,7 @@ void timer_initialisation() {
 
 /*
  * @Function : 
- *            wait_status
+ *            time_output
  *
  * @Parameters : 
  *              param        - NULL (needs to be a vTask)
@@ -736,11 +766,9 @@ void pwm_pulsing(void *pvParameters) {
         bzero(&cmd, PULSE_MAX_LEN);
         if(xQueueReceive(pulse, &cmd, PULSE_MAX_LEN) > 0) {
             if(atoi(&cmd[10]) > 3 || atoi(&cmd[10]) < 0) {
-                // xQueueSendToBack(error, "\e[1m\e[0;31mNo such led.\e[0;39m Available leds: 1, 2, 3", 0);
                 false;
             }
             else if(atoi(&cmd[12]) >= 2 || atoi(&cmd[12]) <= 0) {
-                // xQueueSendToBack(error, "\e[1m\e[0;31mInvalid Hz number.\e[0;39m Available Hz 0 < f < 2", 0);
                 status = false;
             }
             else {
@@ -772,6 +800,113 @@ void pwm_pulsing(void *pvParameters) {
     }
 }
 
+
+/*
+ * @Function : 
+ *            time_output
+ *
+ * @Parameters : 
+ *              param        - NULL (needs to be a vTask)
+ *
+ * @Description : 
+ *               Call display updates each interrupt(1 second)
+*/
+
+void alarm_ding(void *param) {
+    timer_initialisation();
+
+    while(true) {
+        xTaskNotifyWait(0x00000000, 0x00000000, NULL, portMAX_DELAY);
+        sound_status = true;
+        timer_pause(TIMER_GROUP_0, timer_index_alarm);
+        vTaskDelay(2000);
+        sound_status = false;
+        vTaskDelay(20);
+    }
+}
+
+
+/*
+ * @Function : 
+ *            set_timer
+ *
+ * @Parameters :
+ *              secs        - amount of seconds timer should count for
+ *
+ * @Description : 
+ *               Configures time to count up for <secs> seconds, and use function <clock_isr>
+ *               as an interrupt to notify changes of timer
+*/
+
+void set_timer(int secs) {
+    timer_config_t clock_cfg = {
+        .divider = TIMER_DIVIDER,
+        .counter_dir = TIMER_COUNT_UP,
+        .counter_en = TIMER_PAUSE,
+        .alarm_en = TIMER_ALARM_EN,
+        .auto_reload = TEST_WITH_RELOAD,
+    };
+    timer_init(TIMER_GROUP_0, timer_index_alarm, &clock_cfg);
+    timer_set_counter_value(TIMER_GROUP_0, timer_index_alarm, 0);
+    timer_set_alarm_value(TIMER_GROUP_0, timer_index_alarm, (secs) * TIMER_SCALE);
+    timer_enable_intr(TIMER_GROUP_0, timer_index_alarm);
+    timer_isr_register(TIMER_GROUP_0, timer_index_alarm, clock_alarm, NULL, ESP_INTR_FLAG_IRAM, NULL);
+    timer_start(TIMER_GROUP_0, timer_index_alarm);
+}
+
+
+/*
+ * @Function : 
+ *             count_secs_to_alarm
+ *
+ * @Parameters :
+ *               cmd        - command line string from UART2 (console)
+ *
+ * @Description : 
+ *                calculate amount of seconds to set timer. Used for setting alarm
+ *
+ * @Return :
+ *           time_to_alarm_secs        - amount of seconds for seting timer
+*/
+
+int count_secs_to_alarm(char* cmd) {
+    int time_to_alarm_secs = 0;
+    int current_time_secs = HOURS * 3600 + MINUTES * 60 + seconds;
+    char time[3];
+    int ind = 10;
+    int start_ind = 0;
+
+    bzero(&time, 3);
+    for(; cmd[ind] > 47 && cmd[ind] < 58; ind++) {
+        time[ind - 10] = cmd[ind];
+    }
+    time_to_alarm_secs += 3600 * atoi(time);   
+    if(strlen(cmd) > ind) {
+        bzero(&time, 3);
+        start_ind = ind + 1;
+        for(ind += 1; cmd[ind] > 47 && cmd[ind] < 58; ind++) {
+            time[ind - start_ind] = cmd[ind];
+        }
+        time_to_alarm_secs += 60 * atoi(time);   
+    }
+    if(strlen(cmd) > ind) {
+        bzero(&time, 3);
+        start_ind = ind + 1;
+        for(ind += 1; cmd[ind] > 47 && cmd[ind] < 58; ind++) {
+            time[ind - start_ind] = cmd[ind];
+        }
+        time_to_alarm_secs += atoi(time);   
+    }
+    if(time_to_alarm_secs < current_time_secs) {
+        printf("curren : %d\n", current_time_secs);
+        time_to_alarm_secs += ((3600 * 24) - current_time_secs);
+    }
+    else {
+        printf("curren : %d\n", current_time_secs);
+        time_to_alarm_secs = (time_to_alarm_secs - current_time_secs);
+    }
+    return time_to_alarm_secs - 1;
+}
 
 /*
  * @Function : 
@@ -836,6 +971,20 @@ void handle_cmd(void *pvParameters) {
             uart_write_bytes(UART_NUM_2, buff, strlen(buff));
             command_line_arrow();
         }
+        else if(strstr(cmd, "sound on") == cmd) {
+            sound_status = true;
+            command_line_arrow();
+        }
+        else if(strstr(cmd, "sound off") == cmd) {
+            sound_status = false;
+            command_line_arrow();
+        }
+        else if(strstr(cmd, "set alarm") == cmd) {
+            int time_to_alaram = count_secs_to_alarm(cmd);
+            printf("%d\n", time_to_alaram);
+            set_timer(time_to_alaram);
+            command_line_arrow();
+        }
         else if(command_line_status == true) {
             command_line_arrow();
         }
@@ -869,6 +1018,52 @@ void uart_init() {
     uart_driver_install(UART_NUM_2, uart_buffer_size, 0, 0, NULL, 0);
 }
 
+
+/*
+ * @Function : 
+ *             sound_task
+ *
+ * @Parameters : 
+ *               pvParameters        - NULL (needs to be a vTask)
+ *
+ * @Description : 
+ *                Play sound if through i2s if <sound_status> is True
+*/
+
+void sound_task(void *pvParameters) {
+    gpio_set_direction(EN_AMP, GPIO_MODE_OUTPUT);
+    gpio_set_level(EN_AMP, 1);
+    dac_output_enable(DAC_CHANNEL_1);
+
+    static const int i2s_num = 0;
+    static const i2s_config_t i2s_config = {
+        .mode = I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_DAC_BUILT_IN,
+        .sample_rate      = 44100,
+        .bits_per_sample  = 16,
+        .channel_format   = I2S_CHANNEL_FMT_RIGHT_LEFT,
+        .intr_alloc_flags = 0,
+        .dma_buf_count    = 2,
+        .dma_buf_len      = 1024,
+        .use_apll         = 1
+    };
+    i2s_driver_install(i2s_num, &i2s_config, 0, NULL); 
+    i2s_set_pin(i2s_num, NULL);
+    size_t i2s_bytes_write = 0;
+    uint8_t audio_table[]= {0xFF};
+    i2s_stop(0);
+
+    while(true) {
+        if(sound_status) {
+            i2s_start(0);
+        }
+        else {
+            i2s_stop(0);
+        }
+        i2s_write(i2s_num, audio_table, 1, &i2s_bytes_write, 0);
+        vTaskDelay(10);
+    }
+}
+
 void app_main() {
     queue = xQueueCreate(1, CMD_MAX_LEN);
     error = xQueueCreate(1, ERR_MAX_LEN);
@@ -888,5 +1083,8 @@ void app_main() {
     xTaskCreate(time_output, "time_output", 12040u, NULL, 3, &xTaskTimeOutput);
     xTaskCreate(input_getter, "input_getter", 4048u, NULL, 1, NULL);
     xTaskCreate(handle_cmd, "handle_cmd", 4048u, NULL, 1, NULL);
-    xTaskCreate(pwm_pulsing, "pwm_pulsing", 4048, NULL, 3, NULL);
+    xTaskCreate(pwm_pulsing, "pwm_pulsing", 4048u, NULL, 3, NULL);
+    xTaskCreate(sound_task, "sound_task", 12040u, NULL, 2, NULL);
+    xTaskCreate(alarm_ding, "alarm_ding", 4048u, NULL, 3, &xAlarmTimeOutput);
+
 }
