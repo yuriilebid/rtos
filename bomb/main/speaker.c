@@ -12,6 +12,8 @@
 #include "string.h"
 #include "driver/i2c.h"
 
+// changed 
+
 void beep_sound(void *pvParameters) {
     for(int i = 0; true; i-=-1) {
         for(int i = 0; i < 20; i++) {

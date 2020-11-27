@@ -99,7 +99,6 @@ void weather(void *pvParameters) {
         }
         xQueueSendToBack(ram, &measure, 5);
         time_secs_general += 5;
-
     }
     vTaskDelete(NULL);
 }
@@ -173,14 +172,14 @@ void get_range_of_data(int size) {
     char buff[25];
     int count = 0;
     
-    vTaskSuspendAll();
+    // vTaskSuspendAll();
     if(size > uxQueueMessagesWaiting(ram) || size <= 0) {
         error_handler("\e[1m\e[0;31mInvalid logs range\e[0;39m Available 1 <= range <= 60", true);
     }
     else {
         error_handler("\e[1m\e[0;32mShowing range logs\e[0;39m", false);
     }
-    vTaskSuspend(xTaskWeather);
+    // vTaskSuspend(xTaskWeather);
     for(int i = 0; i < 60 && xQueueReceive(ram, &data[i], CMD_MAX_LEN) == pdTRUE; i++) {
         data[i + 1].humidity = 0;
         count++;
@@ -201,7 +200,7 @@ void get_range_of_data(int size) {
         }
         xQueueSendToFront(ram, &data[count], 5);
     }
-    vTaskResume(xTaskWeather);
+    // vTaskResume(xTaskWeather);
     command_line_status = true;
 }
 
@@ -256,6 +255,7 @@ void handle_cmd(void *pvParameters) {
 
         if(strstr(cmd, "get logs") == cmd)  {
             int amount = get_full_number(9, cmd);
+
             get_range_of_data(amount);
             command_line_arrow();
 

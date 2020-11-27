@@ -17,7 +17,7 @@
 #define SH1106_ADDR 0x3C            // Deafault sh1106  address
 #define SH1106_PORT I2C_NUM_0
 
-uint8_t brightness_max = 100;
+int brightness_max = 100;
 
 typedef struct {
     uint8_t addr;
@@ -230,10 +230,9 @@ void get_light(void *pvParameters) {
     adc1_config_width(ADC_WIDTH_BIT_12);
     adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_0);
     while(true) {
-        brightness_max = ((4095 - adc1_get_raw(ADC1_CHANNEL_0)) / 16) + 10;
+        brightness_max =  (4096 - adc1_get_raw(ADC1_CHANNEL_0)) / 16;
         vTaskDelay(10);
     }
-    vTaskDelete(NULL);
 }
 
 
